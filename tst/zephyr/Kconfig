@@ -1,0 +1,15 @@
+# Copyright (c) 2022 Laczen
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+mainmenu "KVS configuration"
+
+menu "KVS settings"
+
+config KVS
+	bool "Enable Key Value Store"
+	
+endmenu
+
+source "Kconfig.zephyr"
