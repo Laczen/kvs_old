@@ -8,24 +8,27 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 
 # Path to "os" subdirectory of repository root.
 get_filename_component(OS_DIR ${APPLICATION_SOURCE_DIR} DIRECTORY)
+message(STATUS "OS_DIR = ${OS_DIR}")
 # Path to repository root.
 get_filename_component(ROOT_DIR ${OS_DIR} DIRECTORY)
+message(STATUS "ROOT_DIR = ${ROOT_DIR}")
 
 file(READ "${ROOT_DIR}/VERSION" KVS_VERSION)
 project(kvstst_${KVS_VERSION})
 
 # Path to kvs library
 set(KVS_DIR "${ROOT_DIR}/lib")
+message(STATUS "KVS_DIR = ${KVS_DIR}")
 assert_exists(KVS_DIR)
 
 if(CONFIG_KVS)
 
 zephyr_include_directories(
-    ${ROOT_DIR}/lib/include
+    ${KVS_DIR}/include
 )
 
 zephyr_library_sources(
-    ${ROOT_DIR}/lib/src/kvs.c
+    ${KVS_DIR}/src/kvs.c
 )
 
 zephyr_library_sources(
