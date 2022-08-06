@@ -39,7 +39,8 @@ extern "C" {
 #define KVS_ALIGNUP(num, align)	  (((num) + (align - 1)) & ~((align)-1))
 #define KVS_ALIGNDOWN(num, align) ((num) & ~((align)-1))
 
-#define KVS_CONTAINER_OF(ptr, type, field) ((type *)(((char *)(ptr)) - offsetof(type, field)))
+#define KVS_CONTAINER_OF(ptr, type, field)                                     \
+	((type *)(((char *)(ptr)) - offsetof(type, field)))
 
 /**
  * @brief KVS interface definition
@@ -50,7 +51,8 @@ extern "C" {
  * @brief KVS constant values
  *
  */
-enum kvs_constants {
+enum kvs_constants
+{
 	KVS_HDRSTART = 0b10000000,
 	KVS_HDRSTART_MASK = 0b11000000,
 	KVS_FILLCHAR = 0b01100110,
@@ -63,7 +65,8 @@ enum kvs_constants {
  * @brief KVS error codes
  *
  */
-enum kvs_error_codes {
+enum kvs_error_codes
+{
 	KVS_ENOENT = 2,	  /**< No such entry */
 	KVS_EIO = 5,	  /**< I/O Error */
 	KVS_EAGAIN = 11,  /**< No more contexts */
@@ -78,7 +81,7 @@ enum kvs_error_codes {
  *
  */
 struct kvs_ent {
-	uint32_t *kvs_id;   /**< pointer to the kvs_id in kvs */
+	bool *kvs_rdy;      /**< pointer to the boolean rdy (ready) in kvs */
 	uint32_t start;	    /**< start position of the entry */
 	uint32_t next;	    /**< position of the next entry */
 	uint32_t ext_start; /**< start of extra (internal) data (from start) */
@@ -95,9 +98,9 @@ struct kvs_ent {
  */
 
 struct kvs_cfg {
-	const uint32_t bsize;	/**< block or sector size (byte) */
-	const uint32_t bcnt;	/**< block count (including spare blocks) */
-	const uint32_t bspr;	/**< spare block count */
+	const uint32_t bsize; /**< block or sector size (byte) */
+	const uint32_t bcnt;  /**< block count (including spare blocks) */
+	const uint32_t bspr;  /**< spare block count */
 
 	void *ctx;	      /**< opaque context pointer */
 	void *pbuf;	      /**< pointer to prog buffer */
@@ -161,6 +164,15 @@ struct kvs_cfg {
 	int (*init)(void *ctx);
 
 	/**
+	 * @brief memory device release function
+	 *
+	 * @param[in] ctx pointer to memory context
+	 *
+	 * @return 0 on success, error is propagated to user
+	 */
+	int (*release)(void *ctx);
+
+	/**
 	 * @brief os provided lock function
 	 *
 	 * @param[in] ctx pointer to memory context
@@ -174,7 +186,7 @@ struct kvs_cfg {
 	 *
 	 * @param[in] ctx pointer to memory context
 	 *
-	 * @return 0 on success, error is propagated to user
+	 * @return 0 on success, error is ignored
 	 */
 	int (*unlock)(void *ctx);
 };
@@ -184,10 +196,9 @@ struct kvs_cfg {
  *
  */
 struct kvs_data {
-	uint32_t pos;		/**< current memory (write) position */
-	uint32_t bend;		/**< current memory (write) block end */
-	uint32_t epoch;		/**< current erase counter */
-	struct kvs_ent *wr_ent; /**< pointer to write entry */
+	uint32_t pos;	/**< current memory (write) position */
+	uint32_t bend;	/**< current memory (write) block end */
+	uint32_t epoch; /**< current erase counter */
 };
 
 /**
@@ -195,35 +206,37 @@ struct kvs_data {
  *
  */
 struct kvs {
-	const uint32_t id;
 	const struct kvs_cfg *cfg;
-	struct kvs_data *data;	
+	struct kvs_data *data;
+	bool rdy;
 };
 
 /**
  * @brief Helper macro to define a kvs
  *
- */										
-#define DEFINE_KVS(_name, _bsize, _bcnt, _bspr, _ctx, _pbuf, _psize, _read, _prog, _sync,	   \
-		   _init, _lock, _unlock)							   \
-	struct kvs_cfg _name##_kvs_cfg = {                                                         \
-		.bsize = _bsize,								   \
-		.bcnt = _bcnt,									   \
-		.bspr = _bspr,									   \
-		.ctx = &_ctx,                                                                      \
-		.pbuf = &_pbuf,                                                                    \
-		.psize = _psize,                                                                   \
-		.read = _read,                                                                     \
-		.prog = _prog,                                                                     \
-		.sync = _sync,                                                                     \
-		.init = _init,			                                                   \
-		.lock = _lock,                                                                     \
-		.unlock = _unlock,                                                                 \
-	};											   \
-	struct kvs_data _name##_kvs_data;							   \
-	struct kvs _name##_kvs = {                                                                 \
-		.cfg = &_name##_kvs_cfg,                                                           \
-		.data = &_name##_kvs_data,                                                         \
+ */
+#define DEFINE_KVS(_name, _bsize, _bcnt, _bspr, _ctx, _pbuf, _psize, _read,    \
+		   _prog, _comp, _sync, _init, _release, _lock, _unlock)       \
+	struct kvs_cfg _name##_kvs_cfg = {                                     \
+		.bsize = _bsize,                                               \
+		.bcnt = _bcnt,                                                 \
+		.bspr = _bspr,                                                 \
+		.ctx = _ctx,                                                   \
+		.pbuf = _pbuf,                                                 \
+		.psize = _psize,                                               \
+		.read = _read,                                                 \
+		.prog = _prog,                                                 \
+		.comp = _comp,                                                 \
+		.sync = _sync,                                                 \
+		.init = _init,                                                 \
+		.release = _release,                                           \
+		.lock = _lock,                                                 \
+		.unlock = _unlock,                                             \
+	};                                                                     \
+	struct kvs_data _name##_kvs_data;                                      \
+	struct kvs _name##_kvs = {                                             \
+		.cfg = &_name##_kvs_cfg,                                       \
+		.data = &_name##_kvs_data,                                     \
 	}
 
 /**
@@ -237,10 +250,12 @@ int kvs_mount(const struct kvs *kvs);
 int kvs_unmount(const struct kvs *kvs);
 
 int kvs_entry_get(struct kvs_ent *ent, const struct kvs *kvs, const char *key);
-int kvs_entry_read(const struct kvs_ent *ent, uint32_t off, void *data, uint32_t len);
+int kvs_entry_read(const struct kvs_ent *ent, uint32_t off, void *data,
+		   uint32_t len);
 
-int kvs_read(const struct kvs *kvs, const char *key, void *data, uint32_t len);
-int kvs_write(const struct kvs *kvs, const char *key, const void *data, uint32_t len);
+int kvs_read(const struct kvs *kvs, const char *key, void *value, uint32_t len);
+int kvs_write(const struct kvs *kvs, const char *key, const void *value,
+	      uint32_t len);
 int kvs_delete(const struct kvs *kvs, const char *key);
 
 int kvs_walk(const struct kvs *kvs, const char *key,
@@ -253,4 +268,4 @@ int kvs_walk_unique(const struct kvs *kvs, const char *key,
 #endif
 
 #endif /* KVS_H_ */
-/** @} */
+       /** @} */
