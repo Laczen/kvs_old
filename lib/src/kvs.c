@@ -180,7 +180,7 @@ static int read_entry_hdr(const uint8_t *hdr, uint32_t *elen, uint32_t *klen,
 static int entry_read(const struct kvs_ent *ent, uint32_t off, void *data,
 		      uint32_t len)
 {
-	const struct kvs *kvs = KVS_CONTAINER_OF(ent->kvs_rdy, struct kvs, rdy);
+	const struct kvs *kvs = ent->kvs;
 
 	len = KVS_MIN(len, ent->next - (ent->start + off));
 	return kvs_dev_read(kvs, ent->start + off, data, len);
@@ -189,7 +189,7 @@ static int entry_read(const struct kvs_ent *ent, uint32_t off, void *data,
 static int entry_write(const struct kvs_ent *ent, uint32_t off,
 		       const void *data, uint32_t len)
 {
-	const struct kvs *kvs = KVS_CONTAINER_OF(ent->kvs_rdy, struct kvs, rdy);
+	const struct kvs *kvs = ent->kvs;
 	const struct kvs_cfg *cfg = kvs->cfg;
 	const uint32_t psize = cfg->psize;
 	const uint32_t rem = KVS_ALIGNUP(off, psize) - off;
@@ -341,12 +341,12 @@ struct block_start_ext {
 
 static void entry_link(struct kvs_ent *ent, const struct kvs *kvs)
 {
-	ent->kvs_rdy = (bool *)&kvs->rdy;
+	ent->kvs = (struct kvs *)kvs;
 }
 
 static int entry_write_hdr(struct kvs_ent *ent)
 {
-	const struct kvs *kvs = KVS_CONTAINER_OF(ent->kvs_rdy, struct kvs, rdy);
+	const struct kvs *kvs = ent->kvs;
 	const uint32_t key_len = ent->val_start;
 	const uint32_t val_len = ent->val_len;
 	const uint32_t psize = kvs->cfg->psize;
@@ -394,7 +394,7 @@ end:
 
 static int entry_write_trl(struct kvs_ent *ent)
 {
-	const struct kvs *kvs = KVS_CONTAINER_OF(ent->kvs_rdy, struct kvs, rdy);
+	const struct kvs *kvs = ent->kvs;
 	const uint8_t fill = KVS_FILLCHAR;
 	uint32_t off = ent->val_start + ent->val_len;
 	uint32_t len = ent->next - ent->start - off;
@@ -448,7 +448,7 @@ end:
 static int entry_copy(const struct kvs_ent *ent)
 {
 	struct kvs_ent cp_ent = {
-		.kvs_rdy = ent->kvs_rdy,
+		.kvs = (struct kvs *)ent->kvs,
 		.val_start = ent->val_start - ent->key_start,
 		.val_len = ent->val_len,
 	};
@@ -486,7 +486,7 @@ end:
 
 static int entry_get_info(struct kvs_ent *ent)
 {
-	const struct kvs *kvs = KVS_CONTAINER_OF(ent->kvs_rdy, struct kvs, rdy);
+	const struct kvs *kvs = ent->kvs;
 	const struct kvs_cfg *cfg = kvs->cfg;
 	const uint32_t psize = cfg->psize;
 	uint8_t hdr[KVS_MAXHDRSIZE], fill;
@@ -527,7 +527,7 @@ static int entry_match_in_block(struct kvs_ent *ent,
 					      void *arg),
 				void *arg)
 {
-	const struct kvs *kvs = KVS_CONTAINER_OF(ent->kvs_rdy, struct kvs, rdy);
+	const struct kvs *kvs = ent->kvs;
 	const uint32_t bsize = kvs->cfg->bsize;
 	const uint32_t bend = KVS_ALIGNDOWN(ent->start, bsize) + bsize;
 
@@ -554,7 +554,7 @@ static int entry_zigzag_walk(struct kvs_ent *ent,
 					   void *arg),
 			     void *arg)
 {
-	const struct kvs *kvs = KVS_CONTAINER_OF(ent->kvs_rdy, struct kvs, rdy);
+	const struct kvs *kvs = ent->kvs;
 	const struct kvs_cfg *cfg = kvs->cfg;
 	const struct kvs_data *data = kvs->data;
 	bool found = false;
@@ -710,7 +710,7 @@ end:
 
 static int compact_walk_cb(const struct kvs_ent *ent, void *cb_arg)
 {
-	const struct kvs *kvs = KVS_CONTAINER_OF(ent->kvs_rdy, struct kvs, rdy);
+	const struct kvs *kvs = ent->kvs;
 	int rc = 0;
 
 	for (int i = 0; i < kvs->cfg->bspr; i++) {
@@ -744,12 +744,16 @@ static int compact(const struct kvs *kvs, uint32_t bcnt)
 int kvs_entry_read(const struct kvs_ent *ent, uint32_t off, void *data,
 		   uint32_t len)
 {
+	if ((ent == NULL) || (ent->kvs == NULL) || (!ent->kvs->data->ready)) {
+		return -KVS_EINVAL;
+	}
+
 	return entry_read(ent, off, data, len);
 }
 
 int kvs_entry_get(struct kvs_ent *ent, const struct kvs *kvs, const char *key)
 {
-	if ((kvs == NULL) || (kvs->cfg == NULL)) {
+	if ((kvs == NULL) || (!kvs->data->ready) || (key == NULL)) {
 		return -KVS_EINVAL;
 	}
 
@@ -758,7 +762,7 @@ int kvs_entry_get(struct kvs_ent *ent, const struct kvs *kvs, const char *key)
 
 int kvs_read(const struct kvs *kvs, const char *key, void *value, uint32_t len)
 {
-	if ((kvs == NULL) || (key == NULL) || (kvs->cfg == NULL)) {
+	if ((kvs == NULL) || (!kvs->data->ready) || (key == NULL)) {
 		return -KVS_EINVAL;
 	}
 
@@ -776,7 +780,7 @@ int kvs_read(const struct kvs *kvs, const char *key, void *value, uint32_t len)
 int kvs_write(const struct kvs *kvs, const char *key, const void *value,
 	      uint32_t len)
 {
-	if ((kvs == NULL) || (key == NULL) || (kvs->cfg == NULL)) {
+	if ((kvs == NULL) || (!kvs->data->ready) || (key == NULL)) {
 		return -KVS_EINVAL;
 	}
 
@@ -815,7 +819,7 @@ int kvs_walk_unique(const struct kvs *kvs, const char *key,
 		    int (*cb)(const struct kvs_ent *ent, void *cb_arg),
 		    void *cb_arg)
 {
-	if ((kvs == NULL) || (kvs->cfg == NULL)) {
+	if ((kvs == NULL) || (!kvs->data->ready)) {
 		return -KVS_EINVAL;
 	}
 
@@ -835,7 +839,7 @@ int kvs_walk_unique(const struct kvs *kvs, const char *key,
 int kvs_walk(const struct kvs *kvs, const char *key,
 	     int (*cb)(const struct kvs_ent *ent, void *cb_arg), void *cb_arg)
 {
-	if ((kvs == NULL) || (kvs->cfg == NULL)) {
+	if ((kvs == NULL) || (!kvs->data->ready)) {
 		return -KVS_EINVAL;
 	}
 
@@ -852,7 +856,7 @@ int kvs_walk(const struct kvs *kvs, const char *key,
 	return entry_walk(kvs, &rdkey, &entry_cb, kvs->cfg->bcnt);
 }
 
-int kvs_mount(const struct kvs *kvs)
+int kvs_mount(struct kvs *kvs)
 {
 	/* basic config checks */
 	if ((kvs == NULL) || (kvs->cfg == NULL) || (kvs->cfg->read == NULL) ||
@@ -868,6 +872,7 @@ int kvs_mount(const struct kvs *kvs)
 	bool last_block_found = false;
 	int rc = 0;
 
+	data->ready = false;
 	rc = kvs_dev_init(kvs);
 	if (rc != 0) {
 		return rc;
@@ -914,26 +919,45 @@ int kvs_mount(const struct kvs *kvs)
 		data->pos = wlk.next;
 	}
 
+	data->ready = true;
+
 end:
 	(void)kvs_dev_unlock(kvs);
-
 	return rc;
 }
 
-int kvs_unmount(const struct kvs *kvs)
+int kvs_unmount(struct kvs *kvs)
 {
+	if (kvs == NULL) {
+		return -KVS_EINVAL;
+	}
+
 	int rc;
 
-	rc = kvs_dev_release(kvs);
+	rc = kvs_dev_lock(kvs);
+	if (rc != 0) {
+		return rc;
+	}
 
-	return rc;
+	kvs->data->ready = false;
+	(void)kvs_dev_unlock(kvs);
+	return kvs_dev_release(kvs);
 }
 
 int kvs_compact(const struct kvs *kvs)
 {
-	if ((kvs == NULL) || (kvs->cfg == NULL)) {
+	if (kvs == NULL) {
 		return -KVS_EINVAL;
 	}
 
-	return compact(kvs, kvs->cfg->bcnt - kvs->cfg->bspr);
+	int rc;
+
+	rc = kvs_dev_lock(kvs);
+	if (rc != 0) {
+		return rc;
+	}
+
+	rc = compact(kvs, kvs->cfg->bcnt - kvs->cfg->bspr);
+	(void)kvs_dev_unlock(kvs);
+	return rc;
 }

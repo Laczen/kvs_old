@@ -39,9 +39,6 @@ extern "C" {
 #define KVS_ALIGNUP(num, align)	  (((num) + (align - 1)) & ~((align)-1))
 #define KVS_ALIGNDOWN(num, align) ((num) & ~((align)-1))
 
-#define KVS_CONTAINER_OF(ptr, type, field)                                     \
-	((type *)(((char *)(ptr)) - offsetof(type, field)))
-
 /**
  * @brief KVS interface definition
  *
@@ -81,7 +78,7 @@ enum kvs_error_codes
  *
  */
 struct kvs_ent {
-	bool *kvs_rdy;      /**< pointer to the boolean rdy (ready) in kvs */
+	struct kvs *kvs;    /**< pointer to the kvs */
 	uint32_t start;	    /**< start position of the entry */
 	uint32_t next;	    /**< position of the next entry */
 	uint32_t ext_start; /**< start of extra (internal) data (from start) */
@@ -196,6 +193,7 @@ struct kvs_cfg {
  *
  */
 struct kvs_data {
+	bool ready;
 	uint32_t pos;	/**< current memory (write) position */
 	uint32_t bend;	/**< current memory (write) block end */
 	uint32_t epoch; /**< current erase counter */
@@ -208,7 +206,6 @@ struct kvs_data {
 struct kvs {
 	const struct kvs_cfg *cfg;
 	struct kvs_data *data;
-	bool rdy;
 };
 
 /**
@@ -246,8 +243,8 @@ struct kvs {
 #define GET_KVS(_name) &_name##_kvs
 
 int kvs_compact(const struct kvs *kvs);
-int kvs_mount(const struct kvs *kvs);
-int kvs_unmount(const struct kvs *kvs);
+int kvs_mount(struct kvs *kvs);
+int kvs_unmount(struct kvs *kvs);
 
 int kvs_entry_get(struct kvs_ent *ent, const struct kvs *kvs, const char *key);
 int kvs_entry_read(const struct kvs_ent *ent, uint32_t off, void *data,
