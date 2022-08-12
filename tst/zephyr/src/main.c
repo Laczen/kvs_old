@@ -1,18 +1,18 @@
 #include <stdarg.h>
-#include <zephyr.h>
-#include <ztest.h>
-#include <sys/printk.h>
+#include "zephyr/zephyr.h"
+#include "zephyr/ztest.h"
+#include "zephyr/sys/printk.h"
 #include "kvs/kvs.h"
 
 
 uint8_t back[1280];
 uint8_t pbuf[8];
 
-static int read(void *ctx, uint32_t offset, void *data, uint32_t len)
+static int read(void *ctx, uint32_t off, void *data, uint32_t len)
 {
         uint8_t *data8 = (uint8_t *)data;
 
-        if ((offset + len) > sizeof(back)) {
+        if ((off + len) > sizeof(back)) {
                 return -KVS_EIO;
         }
 
@@ -20,35 +20,35 @@ static int read(void *ctx, uint32_t offset, void *data, uint32_t len)
         //         return -KVS_EIO;
         // }
 
-        memcpy(data8, &back[offset], len);
+        memcpy(data8, &back[off], len);
         return 0;
 }
 
-static int prog(void *ctx, uint32_t offset, const void *data, uint32_t len)
+static int prog(void *ctx, uint32_t off, const void *data, uint32_t len)
 {
         const uint8_t *data8 = (uint8_t *)data;
 
-        if ((offset + len) > sizeof(back)) {
+        if ((off + len) > sizeof(back)) {
                 return -KVS_EIO;
         }
 
-        if ((offset >= 256) && (offset < 512)) {
+        if ((off >= 256) && (off < 512)) {
                 return -KVS_EIO;
         }
 
-        if (offset % 256 == 0) {
-                memset(&back[offset], 0, 256);
+        if (off % 256 == 0) {
+                memset(&back[off], 0, 256);
         }
 
-        memcpy(&back[offset], data8, len);
+        memcpy(&back[off], data8, len);
         return 0;
 }
 
-static int comp(void *ctx, uint32_t offset, const void *data, uint32_t len)
+static int comp(void *ctx, uint32_t off, const void *data, uint32_t len)
 {
         const uint8_t *data8 = (uint8_t *)data;
 
-        if (memcmp(&back[offset], data8, len) != 0) {
+        if (memcmp(&back[off], data8, len) != 0) {
                 return -KVS_EIO;
         }
 
@@ -61,7 +61,9 @@ DEFINE_KVS(test, 256, 5, 2, NULL, (void *)&pbuf, 4, read, prog, comp, NULL,
 int kvs_walk_cb(const struct kvs_ent *ent, void *cb_arg)
 {
         char buf[12];
-        kvs_entry_read(ent, ent->key_start, buf, KVS_MIN(12, ent->val_start - ent->key_start));
+        uint32_t rdlen = KVS_MIN(sizeof(buf), ent->val_start - ent->key_start);
+
+        kvs_entry_read(ent, ent->key_start, buf, rdlen);
         buf[KVS_MIN(11, ent->val_start - ent->key_start)]= '\0';
         printk("Found entry at %d named %s\n", ent->start, buf);
         return 0;

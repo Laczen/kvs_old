@@ -95,25 +95,25 @@ struct kvs_ent {
  */
 
 struct kvs_cfg {
-	const uint32_t bsize; /**< block or sector size (byte) */
-	const uint32_t bcnt;  /**< block count (including spare blocks) */
-	const uint32_t bspr;  /**< spare block count */
+	const uint32_t bsz;  /**< block or sector size (byte) */
+	const uint32_t bcnt; /**< block count (including spare blocks) */
+	const uint32_t bspr; /**< spare block count */
 
-	void *ctx;	      /**< opaque context pointer */
-	void *pbuf;	      /**< pointer to prog buffer */
-	const uint32_t psize; /**< size in byte of prog buffer */
+	void *ctx;	    /**< opaque context pointer */
+	void *pbuf;	    /**< pointer to prog buffer */
+	const uint32_t psz; /**< size in byte of prog buffer */
 
 	/**
 	 * @brief read from memory device
 	 *
 	 * @param[in] ctx pointer to memory context
-	 * @param[in] offset starting address
+	 * @param[in] off starting address
 	 * @param[in] data pointer to buffer to place read data
 	 * @param[in] len number of bytes
 	 *
 	 * @return 0 on success, -KVS_EIO on error.
 	 */
-	int (*read)(void *ctx, uint32_t offset, void *data, uint32_t len);
+	int (*read)(void *ctx, uint32_t off, void *data, uint32_t len);
 
 	/**
 	 * @brief program memory device
@@ -122,25 +122,25 @@ struct kvs_cfg {
 	 * the blocks or set all bytes to 0xff/0x00 (on eeprom or ram).
 	 *
 	 * @param[in] ctx pointer to memory context
-	 * @param[in] offset starting address
+	 * @param[in] off starting address
 	 * @param[in] data pointer to data to be written
 	 * @param[in] len number of bytes
 	 *
 	 * @return 0 on success, -KVS_EIO on error
 	 */
-	int (*prog)(void *ctx, uint32_t offset, const void *data, uint32_t len);
+	int (*prog)(void *ctx, uint32_t off, const void *data, uint32_t len);
 
 	/**
 	 * @brief compare data to memory device content (optional)
 	 *
 	 * @param[in] ctx pointer to memory context
-	 * @param[in] offset starting address
+	 * @param[in] off starting address
 	 * @param[in] data pointer to data to be compared
 	 * @param[in] len number of bytes
 	 *
 	 * @return 0 on success, -KVS_EIO on error
 	 */
-	int (*comp)(void *ctx, uint32_t offset, const void *data, uint32_t len);
+	int (*comp)(void *ctx, uint32_t off, const void *data, uint32_t len);
 
 	/**
 	 * @brief memory device sync
@@ -212,28 +212,28 @@ struct kvs {
  * @brief Helper macro to define a kvs
  *
  */
-#define DEFINE_KVS(_name, _bsize, _bcnt, _bspr, _ctx, _pbuf, _psize, _read,    \
-		   _prog, _comp, _sync, _init, _release, _lock, _unlock)       \
-	struct kvs_cfg _name##_kvs_cfg = {                                     \
-		.bsize = _bsize,                                               \
-		.bcnt = _bcnt,                                                 \
-		.bspr = _bspr,                                                 \
-		.ctx = _ctx,                                                   \
-		.pbuf = _pbuf,                                                 \
-		.psize = _psize,                                               \
-		.read = _read,                                                 \
-		.prog = _prog,                                                 \
-		.comp = _comp,                                                 \
-		.sync = _sync,                                                 \
-		.init = _init,                                                 \
-		.release = _release,                                           \
-		.lock = _lock,                                                 \
-		.unlock = _unlock,                                             \
-	};                                                                     \
-	struct kvs_data _name##_kvs_data;                                      \
-	struct kvs _name##_kvs = {                                             \
-		.cfg = &_name##_kvs_cfg,                                       \
-		.data = &_name##_kvs_data,                                     \
+#define DEFINE_KVS(_name, _bsz, _bcnt, _bspr, _ctx, _pbuf, _psz, _read, _prog,  \
+		   _comp, _sync, _init, _release, _lock, _unlock)               \
+	struct kvs_cfg _name##_kvs_cfg = {                                      \
+		.bsz = _bsz,                                                    \
+		.bcnt = _bcnt,                                                  \
+		.bspr = _bspr,                                                  \
+		.ctx = _ctx,                                                    \
+		.pbuf = _pbuf,                                                  \
+		.psz = _psz,                                                    \
+		.read = _read,                                                  \
+		.prog = _prog,                                                  \
+		.comp = _comp,                                                  \
+		.sync = _sync,                                                  \
+		.init = _init,                                                  \
+		.release = _release,                                            \
+		.lock = _lock,                                                  \
+		.unlock = _unlock,                                              \
+	};                                                                      \
+	struct kvs_data _name##_kvs_data;                                       \
+	struct kvs _name##_kvs = {                                              \
+		.cfg = &_name##_kvs_cfg,                                        \
+		.data = &_name##_kvs_data,                                      \
 	}
 
 /**
