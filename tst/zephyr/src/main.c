@@ -32,9 +32,9 @@ static int prog(void *ctx, uint32_t off, const void *data, uint32_t len)
                 return -KVS_EIO;
         }
 
-        if ((off >= 256) && (off < 512)) {
-                return -KVS_EIO;
-        }
+        // if ((off >= 256) && (off < 512)) {
+        //         return -KVS_EIO;
+        // }
 
         if (off % 256 == 0) {
                 memset(&back[off], 0, 256);
@@ -55,7 +55,7 @@ static int comp(void *ctx, uint32_t off, const void *data, uint32_t len)
         return 0;
 }
 
-DEFINE_KVS(test, 256, 5, 2, NULL, (void *)&pbuf, 4, read, prog, comp, NULL,
+DEFINE_KVS(test, 256, 5, 1, NULL, (void *)&pbuf, 4, read, prog, comp, NULL,
            NULL, NULL, NULL, NULL);
 
 int kvs_walk_cb(const struct kvs_ent *ent, void *cb_arg)
@@ -69,77 +69,199 @@ int kvs_walk_cb(const struct kvs_ent *ent, void *cb_arg)
         return 0;
 }
 
-void test_main(void)
+ZTEST_SUITE(kvs_tests, NULL, NULL, NULL, NULL, NULL);
+
+ZTEST(kvs_tests, kvs_mount)
 {
-        int rc;
         struct kvs *kvs = GET_KVS(test);
-        struct kvs_ent entry;
-        uint8_t tstdata[256];
-        uint8_t rddata[256];
+        int rc;
 
-        kvs_mount(kvs);
-        printk("Mounted pos %d bend %d", kvs->data->pos, kvs->data->bend);
+        (void)kvs_unmount(kvs);
+        rc = kvs_mount(kvs);
+        zassert_false(rc != 0, "mount failed [%d]", rc);
+        rc = kvs_unmount(kvs);
+        zassert_false(rc != 0, "unmount failed [%d]", rc);
+}
 
-        printk("Testing\n");
-        uint8_t cnt = 96;
+ZTEST(kvs_tests, kvs_rw)
+{
+        struct kvs *kvs = GET_KVS(test);
+        uint32_t cnt, rd_cnt;
+        int rc;
 
-        while ((kvs->data->epoch == 0) && (--cnt > 0U)) {
-                rc = kvs_write(kvs, "testkep", &tstdata, 234);
-                if (rc == -KVS_ENOSPC) {
-                        break;
-                }
+        (void)kvs_unmount(kvs);
+        rc = kvs_mount(kvs);
+        zassert_false(rc != 0, "mount failed [%d]", rc);
+
+        cnt = 0U;
+        rc = kvs_write(kvs, "/cnt", &cnt, sizeof(cnt));
+        zassert_false(rc != 0, "write failed [%d]", rc);
+
+        rd_cnt = cnt + 1U;
+        rc = kvs_read(kvs, "/cnt", &rd_cnt, sizeof(rd_cnt));
+        zassert_false(rc != 0, "read failed [%d]", rc);
+        zassert_false(rd_cnt != cnt, "wrong read value");
+
+        cnt++;
+        rc = kvs_write(kvs, "/cnt", &cnt, sizeof(cnt));
+        zassert_false(rc != 0, "write failed [%d]", rc);
+
+        rd_cnt = cnt + 1U;
+        rc = kvs_read(kvs, "/cnt", &rd_cnt, sizeof(rd_cnt));
+        zassert_false(rc != 0, "read failed [%d]", rc);
+        zassert_false(rd_cnt != cnt, "wrong read value");
+
+        rc = kvs_unmount(kvs);
+        zassert_true(rc == 0, "unmount failed [%d]", rc);
+}
+
+ZTEST(kvs_tests, kvs_remount)
+{
+        struct kvs *kvs = GET_KVS(test);
+        uint32_t cnt, pos, bend, epoch;
+        int rc;
+
+        (void)kvs_unmount(kvs);
+        rc = kvs_mount(kvs);
+        zassert_false(rc != 0, "mount failed [%d]", rc);
+
+        cnt = 0U;
+        rc = kvs_write(kvs, "/cnt", &cnt, sizeof(cnt));
+        zassert_false(rc != 0, "write failed [%d]", rc);
+
+        pos = kvs->data->pos;
+        bend = kvs->data->bend;
+        epoch = kvs->data->epoch;
+
+        rc = kvs_unmount(kvs);
+        zassert_true(rc == 0, "unmount failed [%d]", rc);
+
+        rc = kvs_mount(kvs);
+        zassert_false(rc != 0, "mount failed [%d]", rc);
+        zassert_false(pos != kvs->data->pos, "wrong kvs->data->pos");
+        zassert_false(bend != kvs->data->bend, "wrong kvs->data->bend");
+        zassert_false(epoch != kvs->data->epoch, "wrong kvs->data->epoch");
+
+        rc = kvs_unmount(kvs);
+        zassert_true(rc == 0, "unmount failed [%d]", rc);
+}
+
+ZTEST(kvs_tests, kvs_gc)
+{
+        struct kvs *kvs = GET_KVS(test);
+        uint32_t cnt, epoch;
+        int rc;
+
+        (void)kvs_unmount(kvs);
+        rc = kvs_mount(kvs);
+        zassert_false(rc != 0, "mount failed [%d]", rc);
+
+        cnt = 0U;
+        rc = kvs_write(kvs, "/cnt", &cnt, sizeof(cnt));
+        zassert_false(rc != 0, "write failed [%d]", rc);
+        epoch = kvs->data->epoch;
+
+        while (kvs->data->epoch == epoch) {
+                cnt++;
+                rc = kvs_write(kvs, "/cnt_", &cnt, sizeof(cnt));
+                zassert_false(rc != 0, "write failed [%d]", rc);
         }
 
-        printk("Calling walk unique\n");
-        kvs_walk_unique(kvs, "t", kvs_walk_cb, NULL);
-        printk("Calling walk\n");
-        kvs_walk(kvs, "t", kvs_walk_cb, NULL);
-        kvs_mount(kvs);
+        rc = kvs_read(kvs, "/cnt_", &cnt, sizeof(cnt));
+        zassert_false(rc != 0, "read failed [%d]", rc);
 
-        printk("cnt: %d\n", cnt);
-        rc = kvs_write(kvs, "testkey", tstdata, 1);
+        rc = kvs_read(kvs, "/cnt", &cnt, sizeof(cnt));
+        zassert_false(rc != 0, "read failed [%d]", rc);
+        zassert_false(cnt != 0U, "wrong read value");
 
-        memcpy(tstdata, "datatsttst", 10);
-        rc = kvs_write(kvs, "testit", tstdata, 12);
+        rc = kvs_write(kvs, "/cnt", NULL, 0);
+        zassert_false(rc != 0, "write failed [%d]", rc);
+        epoch = kvs->data->epoch;
 
-        memcpy(tstdata, "dayatst", 7);
+        while (kvs->data->epoch == epoch) {
+                cnt++;
+                rc = kvs_write(kvs, "/cnt_", &cnt, sizeof(cnt));
+                zassert_false(rc != 0, "write failed [%d]", rc);
+        }
 
-        rc = kvs_write(kvs, "testit", tstdata, 7);
+        rc = kvs_read(kvs, "/cnt", &cnt, sizeof(cnt));
+        zassert_false(rc == 0, "read succeeded on deleted item");
 
-        printk("Doing read\n");
-        rc = kvs_read(kvs, "testit", rddata, sizeof(tstdata));
-        printk("Read result: %d data %s\n", rc, rddata);
-
-        uint8_t tst;
-        rc = kvs_read(kvs, "testkey", &tst, sizeof(tst));
-        printk("Read result: %d %x\n", rc, tst);
-
-        rc = kvs_read(kvs, "test", &tst, sizeof(tst));
-        printk("Read result: %d %x\n", rc, tst);
-
-        rc = kvs_read(kvs, "testkep", &rddata, sizeof(tstdata));
-        printk("Read result: %d %s\n", rc, rddata);
-
-        // printk("Testing gc\n");
-        // for (int i = 0; i < 96; i++) {
-        //         rc = kvs_write(kvs, "testit1", tstdata, 12);
-        // }
-
-        kvs_mount(kvs);
-        // printk("Calling kvs_walk\n");
-        // kvs_walk(kvs, "", kvs_walk_cb, NULL);
-
-        // printk("Calling kvs_walk_unique\n");
-        // kvs_walk_unique(kvs, "", kvs_walk_cb, NULL);
-        // printk("Calling kvs_walk_unique\n");
-        // kvs_walk_unique(&kvs, "testit", kvs_walk_cb, NULL);
-        // printk("fs->pos %d, fs->epoch %d\n", kvs->data->pos, kvs->data->epoch);
-        // printk("Calling compact...\n");
-        // kvs_compact(&kvs);
-        // printk("fs->pos %d, fs->epoch %d\n", kvs->data->pos, kvs->data->epoch);
-        // printk("Calling kvs_walk_unique\n");
-        // kvs_walk_unique(kvs, "", kvs_walk_cb, NULL);
-
-        // kvs_mount(kvs);
-
+        rc = kvs_unmount(kvs);
+        zassert_true(rc == 0, "unmount failed [%d]", rc);
 }
+
+// void test_main(void)
+// {
+//         int rc;
+//         struct kvs *kvs = GET_KVS(test);
+//         struct kvs_ent entry;
+//         uint8_t tstdata[256];
+//         uint8_t rddata[256];
+
+//         kvs_mount(kvs);
+//         printk("Mounted pos %d bend %d", kvs->data->pos, kvs->data->bend);
+
+//         printk("Testing\n");
+//         uint8_t cnt = 96;
+
+//         while ((kvs->data->epoch == 0) && (--cnt > 0U)) {
+//                 rc = kvs_write(kvs, "testkep", &tstdata, 234);
+//                 if (rc == -KVS_ENOSPC) {
+//                         break;
+//                 }
+//         }
+
+//         printk("Calling walk unique\n");
+//         kvs_walk_unique(kvs, "t", kvs_walk_cb, NULL);
+//         printk("Calling walk\n");
+//         kvs_walk(kvs, "t", kvs_walk_cb, NULL);
+//         kvs_mount(kvs);
+
+//         printk("cnt: %d\n", cnt);
+//         rc = kvs_write(kvs, "testkey", tstdata, 1);
+
+//         memcpy(tstdata, "datatsttst", 10);
+//         rc = kvs_write(kvs, "testit", tstdata, 12);
+
+//         memcpy(tstdata, "dayatst", 7);
+
+//         rc = kvs_write(kvs, "testit", tstdata, 7);
+
+//         printk("Doing read\n");
+//         rc = kvs_read(kvs, "testit", rddata, sizeof(tstdata));
+//         printk("Read result: %d data %s\n", rc, rddata);
+
+//         uint8_t tst;
+//         rc = kvs_read(kvs, "testkey", &tst, sizeof(tst));
+//         printk("Read result: %d %x\n", rc, tst);
+
+//         rc = kvs_read(kvs, "test", &tst, sizeof(tst));
+//         printk("Read result: %d %x\n", rc, tst);
+
+//         rc = kvs_read(kvs, "testkep", &rddata, sizeof(tstdata));
+//         printk("Read result: %d %s\n", rc, rddata);
+
+//         // printk("Testing gc\n");
+//         // for (int i = 0; i < 96; i++) {
+//         //         rc = kvs_write(kvs, "testit1", tstdata, 12);
+//         // }
+
+//         kvs_mount(kvs);
+//         // printk("Calling kvs_walk\n");
+//         // kvs_walk(kvs, "", kvs_walk_cb, NULL);
+
+//         // printk("Calling kvs_walk_unique\n");
+//         // kvs_walk_unique(kvs, "", kvs_walk_cb, NULL);
+//         // printk("Calling kvs_walk_unique\n");
+//         // kvs_walk_unique(&kvs, "testit", kvs_walk_cb, NULL);
+//         // printk("fs->pos %d, fs->epoch %d\n", kvs->data->pos, kvs->data->epoch);
+//         // printk("Calling compact...\n");
+//         // kvs_compact(&kvs);
+//         // printk("fs->pos %d, fs->epoch %d\n", kvs->data->pos, kvs->data->epoch);
+//         // printk("Calling kvs_walk_unique\n");
+//         // kvs_walk_unique(kvs, "", kvs_walk_cb, NULL);
+
+//         // kvs_mount(kvs);
+
+// }

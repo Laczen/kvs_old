@@ -95,23 +95,52 @@ static int kvs_dev_comp(const struct kvs *kvs, uint32_t off, const void *data,
 	return cfg->comp(cfg->ctx, off, data, len);
 }
 
-static uint32_t ehdr_elen(const uint8_t *hdr)
+static uint32_t ehdr_ebc(const uint8_t *hdr)
 {
 	return (((*hdr) & 0b00110000) >> 4);
 }
-static uint32_t ehdr_klen(const uint8_t *hdr)
+
+static uint32_t ehdr_kbc(const uint8_t *hdr)
 {
 	return 1U + (((*hdr) & 0b00001100) >> 2);
 }
 
-static uint32_t ehdr_vlen(const uint8_t *hdr)
+static uint32_t ehdr_vbc(const uint8_t *hdr)
 {
 	return 1U + ((*hdr) & 0b00000011);
 }
 
 static uint32_t ehdr_len(const uint8_t *hdr)
 {
-	return 1U + ehdr_elen(hdr) + ehdr_klen(hdr) + ehdr_vlen(hdr);
+	return 1U + ehdr_ebc(hdr) + ehdr_kbc(hdr) + ehdr_vbc(hdr);
+}
+
+static int read_ehdr(const uint8_t *hdr, uint32_t *elen, uint32_t *klen,
+		     uint32_t *vlen)
+{
+	uint8_t *s = (uint8_t *)hdr;
+
+	*elen = 0U;
+	*klen = 0U;
+	*vlen = 0U;
+
+	if (((*s++) & KVS_HDRSTART_MASK) != KVS_HDRSTART) {
+		return -KVS_ENOENT;
+	}
+
+	for (uint32_t i = 0; i < ehdr_ebc(hdr); i++) {
+		*elen += ((*s++) << (8 * i));
+	}
+
+	for (uint32_t i = 0; i < ehdr_kbc(hdr); i++) {
+		*klen += ((*s++) << (8 * i));
+	}
+
+	for (uint32_t i = 0; i < ehdr_vbc(hdr); i++) {
+		*vlen += ((*s++) << (8 * i));
+	}
+
+	return 0;
 }
 
 static void make_ehdr(uint8_t *hdr, uint32_t elen, uint32_t klen, uint32_t vlen)
@@ -145,34 +174,6 @@ static void make_ehdr(uint8_t *hdr, uint32_t elen, uint32_t klen, uint32_t vlen)
 
 		(*hdr) += 1;
 	}
-}
-
-static int read_ehdr(const uint8_t *hdr, uint32_t *elen, uint32_t *klen,
-		     uint32_t *vlen)
-{
-	uint8_t *s = (uint8_t *)hdr;
-
-	*elen = 0U;
-	*klen = 0U;
-	*vlen = 0U;
-
-	if (((*s++) & KVS_HDRSTART_MASK) != KVS_HDRSTART) {
-		return -KVS_ENOENT;
-	}
-
-	for (uint32_t i = 0; i < ehdr_elen(hdr); i++) {
-		*elen += ((*s++) << (8 * i));
-	}
-
-	for (uint32_t i = 0; i < ehdr_klen(hdr); i++) {
-		*klen += ((*s++) << (8 * i));
-	}
-
-	for (uint32_t i = 0; i < ehdr_vlen(hdr); i++) {
-		*vlen += ((*s++) << (8 * i));
-	}
-
-	return 0;
 }
 
 static int entry_read(const struct kvs_ent *ent, uint32_t off, void *data,
@@ -445,11 +446,12 @@ end:
 
 static int entry_copy(const struct kvs_ent *ent)
 {
-	char key[ent->val_start - ent->key_start];
+	const uint32_t key_len = ent->val_start - ent->key_start;
+	char key[key_len + 1];
 	uint8_t value[ent->val_len];
 	struct kvs_ent cp_ent;
 
-	if (entry_read(ent, ent->key_start, key, sizeof(key)) != 0) {
+	if (entry_read(ent, ent->key_start, key, key_len) != 0) {
 		/* loosing a bad entry */
 		return 0;
 	}
@@ -459,6 +461,7 @@ static int entry_copy(const struct kvs_ent *ent)
 		return 0;
 	}
 
+	key[key_len] = '\0';
 	entry_link(&cp_ent, ent->kvs);
 	return entry_add(&cp_ent, key, value, sizeof(value));
 }
@@ -576,7 +579,6 @@ static int entry_zigzag_walk(struct kvs_ent *ent,
 	const struct kvs_data *data = kvs->data;
 	const uint32_t bsz = cfg->bsz;
 	const uint32_t bcnt = cfg->bcnt;
-	const uint32_t bspr = cfg->bspr;
 	const uint32_t end = bsz * bcnt;
 	bool found = false;
 	struct kvs_ent wlk;
@@ -584,7 +586,7 @@ static int entry_zigzag_walk(struct kvs_ent *ent,
 	entry_link(&wlk, kvs);
 	wlk.next = data->bend - bsz;
 
-	for (int i = 0; i < (bcnt - bspr); i++) {
+	for (int i = 0; i < bcnt; i++) {
 		wlk.start = wlk.next;
 		while (entry_match_in_block(&wlk, match, arg) == 0) {
 			found = true;
@@ -759,6 +761,7 @@ static int compact(const struct kvs *kvs, uint32_t bcnt)
 	if (data->pos != (data->bend - cfg->bsz)) {
 		wblock_advance(kvs);
 	}
+
 	return entry_walk_unique(kvs, &rdkey, &compact_entry_cb, bcnt);
 }
 
@@ -932,8 +935,7 @@ int kvs_mount(struct kvs *kvs)
 	entry_link(&wlk, kvs);
 	for (int i = 0; i < cfg->bcnt; i++) {
 		wlk.start = i * cfg->bsz;
-		rc = entry_get_info(&wlk);
-		if (rc == 0) {
+		if (entry_get_info(&wlk) == 0) {
 			struct block_start_ext extra;
 			uint32_t rdlen = sizeof(struct block_start_ext);
 
