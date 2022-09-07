@@ -64,7 +64,7 @@ static int kvs_dev_sync(const struct kvs *kvs)
 		return 0;
 	}
 
-	return cfg->sync(cfg->ctx);
+	return cfg->sync(cfg->ctx, kvs->data->pos);
 }
 
 static int kvs_dev_read(const struct kvs *kvs, uint32_t off, void *data,
@@ -95,88 +95,149 @@ static int kvs_dev_comp(const struct kvs *kvs, uint32_t off, const void *data,
 	return cfg->comp(cfg->ctx, off, data, len);
 }
 
-static uint32_t ehdr_ebc(const uint8_t *hdr)
+static uint32_t kvs_crc32(uint32_t crc, const void *buf, size_t len)
 {
-	return (((*hdr) & 0b00110000) >> 4);
+	const uint8_t *data = (const uint8_t *)buf;
+	/* crc table generated from polynomial 0xedb88320 */
+	static const uint32_t table[16] = {
+		0x00000000U, 0x1db71064U, 0x3b6e20c8U, 0x26d930acU,
+		0x76dc4190U, 0x6b6b51f4U, 0x4db26158U, 0x5005713cU,
+		0xedb88320U, 0xf00f9344U, 0xd6d6a3e8U, 0xcb61b38cU,
+		0x9b64c2b0U, 0x86d3d2d4U, 0xa00ae278U, 0xbdbdf21cU,
+	};
+
+	crc = ~crc;
+
+	for (size_t i = 0; i < len; i++) {
+		uint8_t byte = data[i];
+
+		crc = (crc >> 4) ^ table[(crc ^ byte) & 0x0f];
+		crc = (crc >> 4) ^ table[(crc ^ (byte >> 4)) & 0x0f];
+	}
+
+	return (~crc);
 }
 
-static uint32_t ehdr_kbc(const uint8_t *hdr)
+static bool ehdr_has_odd_parity(const uint8_t *hdr)
 {
-	return 1U + (((*hdr) & 0b00001100) >> 2);
+	uint8_t byte = hdr[0];
+
+	byte ^= (byte >> 4);
+	byte &= 0xf;
+	return ((0x6996 >> byte) & 1U) == 1U;
 }
 
-static uint32_t ehdr_vbc(const uint8_t *hdr)
+static void ehdr_set_odd_parity(uint8_t *hdr)
 {
-	return 1U + ((*hdr) & 0b00000011);
+    	if (!ehdr_has_odd_parity(hdr)) {
+        	*hdr ^= KVS_PARITY_BITMASK;
+	}
 }
 
+/* value length byte count from entry header */
+static uint32_t ehdr_vlbc(const uint8_t *hdr)
+{
+	if ((*hdr & KVS_VALUE_BITMASK) == 0U) {
+		return 0U;
+	}
+
+	return 1U + ((*hdr) & KVS_VALEN_BITMASK);
+}
+
+/* epoch byte count from entry header */
+static uint32_t ehdr_epbc(const uint8_t *hdr)
+{
+	if ((*hdr & KVS_EPOCH_BITMASK) == 0U) {
+		return 0U;
+	}
+
+	return KVS_EPOCHSIZE;
+}
+
+/* entry header size from entry header */
 static uint32_t ehdr_len(const uint8_t *hdr)
 {
-	return 1U + ehdr_ebc(hdr) + ehdr_kbc(hdr) + ehdr_vbc(hdr);
+	return KVS_HDR_MINSIZE + ehdr_epbc(hdr) + ehdr_vlbc(hdr);
 }
 
-static int read_ehdr(const uint8_t *hdr, uint32_t *elen, uint32_t *klen,
-		     uint32_t *vlen)
+static void ehdr2entry(const uint8_t *hdr, struct kvs_ent *ent)
 {
-	uint8_t *s = (uint8_t *)hdr;
+	const uint32_t vlbc_offset = KVS_HDR_MINSIZE + ehdr_epbc(hdr);
 
-	*elen = 0U;
-	*klen = 0U;
-	*vlen = 0U;
+	ent->key_start = ehdr_len(hdr);
+	ent->val_start = ent->key_start + hdr[1];
+	ent->val_len = 0;
 
-	if (((*s++) & KVS_HDRSTART_MASK) != KVS_HDRSTART) {
+	for (uint32_t i = 0; i < ehdr_vlbc(hdr); i++) {
+		ent->val_len += (hdr[vlbc_offset + i] << (8 * i));
+	}
+}
+
+static int ehdr_get_epoch(const uint8_t *hdr, uint32_t *epoch)
+{
+	if ((hdr[0] & KVS_EPOCH_BITMASK) != KVS_EPOCH_BITMASK) {
 		return -KVS_ENOENT;
 	}
 
-	for (uint32_t i = 0; i < ehdr_ebc(hdr); i++) {
-		*elen += ((*s++) << (8 * i));
-	}
-
-	for (uint32_t i = 0; i < ehdr_kbc(hdr); i++) {
-		*klen += ((*s++) << (8 * i));
-	}
-
-	for (uint32_t i = 0; i < ehdr_vbc(hdr); i++) {
-		*vlen += ((*s++) << (8 * i));
-	}
-
+	*epoch = (uint32_t)hdr[2] + (uint32_t)(hdr[3] << 8) +
+	         (uint32_t)(hdr[4] << 16) + (uint32_t)(hdr[5] << 24);
 	return 0;
 }
 
-static void make_ehdr(uint8_t *hdr, uint32_t elen, uint32_t klen, uint32_t vlen)
+static void ehdr_add_klen(uint8_t *hdr, const uint8_t klen)
 {
-	uint8_t *s = hdr;
+	hdr[1] = klen;
+}
 
-	(*s++) = KVS_HDRSTART;
+static void ehdr_add_epoch(uint8_t *hdr, const uint32_t epoch)
+{
+	hdr[0] |= KVS_EPOCH_BITMASK;
+	hdr[2] = (uint8_t)(epoch & 0xff);
+	hdr[3] = (uint8_t)((epoch >> 8) & 0xff);
+	hdr[4] = (uint8_t)((epoch >> 16) & 0xff);
+	hdr[5] = (uint8_t)((epoch >> 24) & 0xff);
+}
 
-	while (elen != 0U) {
-		*s++ = (uint8_t)(elen & 0xff);
-		elen >>= 8;
-		(*hdr) += 16;
+static void ehdr_add_vlen(uint8_t *hdr, uint32_t val_len)
+{
+	uint32_t vlbc_offset = KVS_HDR_MINSIZE + ehdr_epbc(hdr);
+
+	if (val_len == 0U) {
+		hdr[0] &= ~KVS_VALUE_BITMASK;
 	}
 
+	hdr[0] |= KVS_VALUE_BITMASK;
+
 	while (true) {
-		*s++ = (uint8_t)(klen & 0xff);
-		klen >>= 8;
-		if (klen == 0U) {
+		hdr[vlbc_offset++] = (uint8_t)(val_len & 0xff);
+		val_len >>= 8;
+		if (val_len == 0U) {
 			break;
 		}
 
-		(*hdr) += 4;
-	}
-
-	while (true) {
-		*s++ = (uint8_t)(vlen & 0xff);
-		vlen >>= 8;
-		if (vlen == 0U) {
-			break;
-		}
-
-		(*hdr) += 1;
+		hdr[0]++;
 	}
 }
 
-static int entry_read(const struct kvs_ent *ent, uint32_t off, void *data,
+static uint32_t ehdr_make(const struct kvs_ent *ent, uint8_t *hdr)
+{
+	const struct kvs *kvs = ent->kvs;
+	const uint32_t bsz = kvs->cfg->bsz;
+	struct kvs_data *data = kvs->data;
+
+	hdr[0] = KVS_PARITY_BITMASK;
+	ehdr_add_klen(hdr, (uint8_t)(ent->val_start - ent->key_start));
+	if (data->pos == KVS_ALIGNDOWN(data->pos, bsz)) {
+		ehdr_add_epoch(hdr, data->epoch);
+	}
+
+	ehdr_add_vlen(hdr, ent->val_len);
+	ehdr_set_odd_parity(hdr);
+
+	return ehdr_len(hdr);
+}
+
+static int entry_raw_read(const struct kvs_ent *ent, uint32_t off, void *data,
 		      uint32_t len)
 {
 	const struct kvs *kvs = ent->kvs;
@@ -185,8 +246,8 @@ static int entry_read(const struct kvs_ent *ent, uint32_t off, void *data,
 	return kvs_dev_read(kvs, ent->start + off, data, len);
 }
 
-static int entry_write(const struct kvs_ent *ent, uint32_t off, const void *data,
-		       uint32_t len)
+static int entry_raw_write(const struct kvs_ent *ent, uint32_t off,
+			   const void *data, uint32_t len)
 {
 	const struct kvs *kvs = ent->kvs;
 	const struct kvs_cfg *cfg = kvs->cfg;
@@ -271,7 +332,7 @@ static int key_read_cb_entry(const void *ctx, uint32_t off, void *data,
 {
 	struct kvs_ent *ent = (struct kvs_ent *)(ctx);
 
-	return entry_read(ent, ent->key_start + off, data, len);
+	return entry_raw_read(ent, ent->key_start + off, data, len);
 }
 
 static int key_read_cb_const(const void *ctx, uint32_t off, void *data,
@@ -298,7 +359,7 @@ static bool key_starts_with(const struct kvs_ent *ent,
 	while (len != 0U) {
 		uint32_t rdlen = KVS_MIN(len, KVS_BUFSIZE);
 
-		rc = entry_read(ent, ent->key_start + off, bufe, rdlen);
+		rc = entry_raw_read(ent, ent->key_start + off, bufe, rdlen);
 		if (rc != 0) {
 			return false;
 		}
@@ -333,52 +394,58 @@ static void wblock_advance(const struct kvs *kvs)
 	data->bend = data->pos + cfg->bsz;
 }
 
-struct block_start_ext {
-	uint32_t magic;
-	uint32_t epoch;
-};
-
 static void entry_link(struct kvs_ent *ent, const struct kvs *kvs)
 {
 	ent->kvs = (struct kvs *)kvs;
 }
 
-static int entry_write_hdr(struct kvs_ent *ent)
+static int entry_write(struct kvs_ent *ent, uint32_t off, const void *data,
+		       uint32_t len)
 {
-	const struct kvs *kvs = ent->kvs;
-	const uint32_t key_len = ent->val_start;
-	const uint32_t val_len = ent->val_len;
-	const uint32_t psz = kvs->cfg->psz;
-	const uint32_t bsz = kvs->cfg->bsz;
-	const struct block_start_ext ext = {
-		.magic = KVS_MAGIC,
-		.epoch = kvs->data->epoch,
-	};
-	struct kvs_data *data = kvs->data;
-	uint8_t hdr[KVS_MAXHDRSIZE];
-	uint32_t ext_len, hdr_len, len;
-	int rc;
+	ent->crc32 = kvs_crc32(ent->crc32, data, len);
+	return entry_raw_write(ent, off, data, len);
+}
 
-	if (data->pos == KVS_ALIGNDOWN(data->pos, bsz)) {
-		ext_len = sizeof(struct block_start_ext);
-	} else {
-		ext_len = 0U;
-	}
+static int entry_add_init(uint8_t *hdr, struct kvs_ent *ent, uint32_t klen, uint32_t vlen)
+{
+	const uint32_t psz = ent->kvs->cfg->psz;
 
-	make_ehdr(hdr, ext_len, key_len, val_len);
-	hdr_len = ehdr_len(hdr);
-	ent->ext_start = hdr_len;
-	ent->key_start = ent->ext_start + ext_len;
-	ent->val_start = ent->key_start + key_len;
-	ent->val_len = val_len;
-	len = KVS_ALIGNDOWN(ent->val_start + ent->val_len, psz) + psz;
+	ent->key_start = 0U;
+	ent->val_start = klen;
+	ent->val_len = vlen;
 
-	if ((data->pos + len) > data->bend) {
+	hdr_len = ehdr_make(ent, hdr);
+	ent->key_start += hdr_len;
+	ent->val_start += hdr_len;
+
+	entry_len = ent->val_start + ent->val_len + KVS_CRCSIZE;
+	entry_len = KVS_ALIGNUP(entry_len, psz);
+	if (entry_len > (data->bend - data->pos)) {
 		return -KVS_ENOSPC;
 	}
 
+	ent->crc32 = 0U;
+	return 0;
+}
+
+static int entry_add(struct kvs_ent *ent, const char *key, const void *value,
+		     uint32_t val_len)
+{
+	const struct kvs *kvs = ent->kvs;
+	const uint32_t psz = kvs->cfg->psz;
+	const size_t key_len = KVS_MIN(strlen(key), KVS_KEY_MAXSIZE);
+	struct kvs_data *data = kvs->data;
+	uint8_t hdr[KVS_HDR_MAXSIZE];
+	uint32_t hdr_len, entry_len, wpos;
+	int rc;
+
+	rc = entry_add_init(hdr, ent, key_len, val_len);
+	if (rc != 0) {
+		goto end;
+	}
+
 	ent->start = data->pos;
-	ent->next = ent->start + len;
+	ent->next = ent->start + entry_len;
 	data->pos = ent->next;
 
 	rc = entry_write(ent, 0, hdr, hdr_len);
@@ -386,60 +453,33 @@ static int entry_write_hdr(struct kvs_ent *ent)
 		goto end;
 	}
 
-	rc = entry_write(ent, ent->ext_start, &ext, ext_len);
-end:
-	return rc;
-}
+	rc = entry_write(ent, ent->key_start, key, key_len);
+	if (rc != 0) {
+		goto end;
+	}
 
-static int entry_write_trl(struct kvs_ent *ent)
-{
-	const struct kvs *kvs = ent->kvs;
-	const uint8_t fill = KVS_FILLCHAR;
-	uint32_t off = ent->val_start + ent->val_len;
-	uint32_t len = ent->next - ent->start - off;
-	int rc;
+	rc = entry_write(ent, ent->val_start, value, val_len);
+	if (rc != 0) {
+		goto end;
+	}
 
-	while (len != 0U) {
-		rc = entry_write(ent, off, &fill, 1);
+	wpos = ent->val_start + ent->val_len;
+	while (wpos < (entry_len - KVS_CRCSIZE)) {
+		const uint8_t fill = KVS_FILLCHAR;
+		rc = entry_write(ent, wpos, &fill, 1);
 		if (rc != 0) {
 			goto end;
 		}
 
-		len--;
-		off++;
+		wpos++;
+	}
+
+	rc = entry_raw_write(ent, wpos, &ent->crc32, KVS_CRCSIZE);
+	if (rc != 0) {
+		goto end;
 	}
 
 	rc = kvs_dev_sync(kvs);
-end:
-	return rc;
-}
-
-static int entry_add(struct kvs_ent *ent, const char *key, const void *value,
-		     uint32_t len)
-{
-	int rc;
-
-	ent->ext_start = 0;
-	ent->key_start = 0;
-	ent->val_start = strlen(key);
-	ent->val_len = len;
-
-	rc = entry_write_hdr(ent);
-	if (rc != 0) {
-		goto end;
-	}
-
-	rc = entry_write(ent, ent->key_start, key, strlen(key));
-	if (rc != 0) {
-		goto end;
-	}
-
-	rc = entry_write(ent, ent->val_start, value, len);
-	if (rc != 0) {
-		goto end;
-	}
-
-	return entry_write_trl(ent);
 end:
 	return rc;
 }
@@ -451,12 +491,12 @@ static int entry_copy(const struct kvs_ent *ent)
 	uint8_t value[ent->val_len];
 	struct kvs_ent cp_ent;
 
-	if (entry_read(ent, ent->key_start, key, key_len) != 0) {
+	if (entry_raw_read(ent, ent->key_start, key, key_len) != 0) {
 		/* loosing a bad entry */
 		return 0;
 	}
 
-	if (entry_read(ent, ent->val_start, value, sizeof(value)) != 0) {
+	if (entry_raw_read(ent, ent->val_start, value, sizeof(value)) != 0) {
 		/* loosing a bad entry */
 		return 0;
 	}
@@ -465,6 +505,28 @@ static int entry_copy(const struct kvs_ent *ent)
 	entry_link(&cp_ent, ent->kvs);
 	return entry_add(&cp_ent, key, value, sizeof(value));
 }
+
+// static int entry_copy(const struct kvs_ent *ent)
+// {
+// 	const uint32_t key_len = ent->val_start - ent->key_start;
+// 	char key[key_len + 1];
+// 	uint8_t value[ent->val_len];
+// 	struct kvs_ent cp_ent;
+
+// 	if (entry_raw_read(ent, ent->key_start, key, key_len) != 0) {
+// 		/* loosing a bad entry */
+// 		return 0;
+// 	}
+
+// 	if (entry_raw_read(ent, ent->val_start, value, sizeof(value)) != 0) {
+// 		/* loosing a bad entry */
+// 		return 0;
+// 	}
+
+// 	key[key_len] = '\0';
+// 	entry_link(&cp_ent, ent->kvs);
+// 	return entry_add(&cp_ent, key, value, sizeof(value));
+// }
 
 // static int entry_copy(const struct kvs_ent *ent)
 // {
@@ -487,12 +549,12 @@ static int entry_copy(const struct kvs_ent *ent)
 // 	while (len != 0U) {
 // 		const uint32_t rdlen = KVS_MIN(len, sizeof(buf));
 
-// 		rc = entry_read(ent, ent->key_start + off, buf, rdlen);
+// 		rc = entry_raw_read(ent, ent->key_start + off, buf, rdlen);
 // 		if (rc != 0) {
 // 			goto end;
 // 		}
 
-// 		rc = entry_write(&cp_ent, cp_ent.key_start + off, buf, rdlen);
+// 		rc = entry_raw_write(&cp_ent, cp_ent.key_start + off, buf, rdlen);
 // 		if (rc != 0) {
 // 			goto end;
 // 		}
@@ -505,40 +567,69 @@ static int entry_copy(const struct kvs_ent *ent)
 // 	return rc;
 // }
 
+static int entry_crc32_verify(struct kvs_ent *ent)
+{
+	uint32_t len, off, crc32, crc32r;
+	uint8_t buf[KVS_BUFSIZE];
+	int rc;
+
+	len = ent->next - ent->start - KVS_CRCSIZE;
+	off = 0U;
+	crc32 = 0U;
+	while (len != 0U) {
+		uint32_t rdlen = KVS_MIN(len, sizeof(buf));
+		rc = entry_raw_read(ent, off, buf, rdlen);
+		if (rc != 0U) {
+			goto end;
+		}
+		crc32 = kvs_crc32(crc32, buf, rdlen);
+		off += rdlen;
+		len -= rdlen;
+	}
+
+	rc = entry_raw_read(ent, off, &crc32r, KVS_CRCSIZE);
+	if (rc != 0) {
+		goto end;
+	}
+
+	if (crc32 == crc32r) {
+		rc = 0U;
+	} else {
+		rc = -KVS_EIO;
+	}
+
+end:
+	return rc;
+}
+
 static int entry_get_info(struct kvs_ent *ent)
 {
 	const struct kvs *kvs = ent->kvs;
 	const struct kvs_cfg *cfg = kvs->cfg;
 	const uint32_t psz = cfg->psz;
-	uint8_t hdr[KVS_MAXHDRSIZE], fill;
-	uint32_t hdr_len, ext_len, key_len, val_len;
+	uint8_t hdr[KVS_HDR_MAXSIZE];
+	uint32_t esz;
 	int rc;
 
 	ent->next = KVS_ALIGNDOWN(ent->start, cfg->bsz) + cfg->bsz;
-	rc = entry_read(ent, 0, hdr, sizeof(hdr));
+	rc = entry_raw_read(ent, 0, hdr, sizeof(hdr));
 	if (rc != 0) {
 		goto end;
 	}
 
-	rc = read_ehdr(hdr, &ext_len, &key_len, &val_len);
+	if (!ehdr_has_odd_parity(hdr)) {
+		goto end;
+	}
+
+	ehdr2entry(hdr, ent);
+	esz = KVS_ALIGNUP(ent->val_start + ent->val_len + KVS_CRCSIZE, psz);
+	ent->next = ent->start + esz;
+	rc = entry_crc32_verify(ent);
 	if (rc != 0) {
 		goto end;
 	}
 
-	hdr_len = ehdr_len(hdr);
-
-	rc = entry_read(ent, hdr_len + ext_len + key_len + val_len, &fill, 1);
-	if ((rc != 0) || (fill != KVS_FILLCHAR)) {
-		goto end;
-	}
-
-	ent->ext_start = hdr_len;
-	ent->key_start = ent->ext_start + ext_len;
-	ent->val_start = ent->key_start + key_len;
-	ent->val_len = val_len;
-	ent->next = ent->start +
-		    KVS_ALIGNDOWN(ent->val_start + ent->val_len, psz) + psz;
-	return 0;
+	return rc;
 end:
 	return -KVS_ENOENT;
 }
@@ -550,12 +641,18 @@ static int entry_match_in_block(struct kvs_ent *ent,
 {
 	const struct kvs *kvs = ent->kvs;
 	const uint32_t bsz = kvs->cfg->bsz;
-	const uint32_t bend = KVS_ALIGNDOWN(ent->start, bsz) + bsz;
+	const uint32_t psz = kvs->cfg->psz;
+	uint32_t bend = KVS_ALIGNDOWN(ent->start, bsz) + bsz;
+
+	if (bend == kvs->data->bend) {
+		bend = kvs->data->pos;
+	}
 
 	while (ent->next < bend) {
 		ent->start = ent->next;
 		if (entry_get_info(ent) != 0) {
-			break;
+			ent->next = ent->start + psz;
+			continue;
 		}
 
 		if (match == NULL) {
@@ -680,8 +777,8 @@ static int entry_walk_unique(const struct kvs *kvs, struct key_read_cb *rd,
 	wlk.next = (data->bend < end) ? data->bend : 0U;
 	for (int i = 0; i < bcnt; i++) {
 		wlk.start = wlk.next;
-		while (entry_match_in_block(&wlk, match_key_start, (void *)rd) ==
-		       0) {
+		while (entry_match_in_block(&wlk, match_key_start,
+					    (void *)rd) == 0) {
 			struct key_read_cb rdwlkkey;
 			struct kvs_ent last;
 
@@ -772,7 +869,7 @@ int kvs_entry_read(const struct kvs_ent *ent, uint32_t off, void *data,
 		return -KVS_EINVAL;
 	}
 
-	return entry_read(ent, off, data, len);
+	return entry_raw_read(ent, off, data, len);
 }
 
 int kvs_entry_get(struct kvs_ent *ent, const struct kvs *kvs, const char *key)
@@ -795,7 +892,7 @@ int kvs_read(const struct kvs *kvs, const char *key, void *value, uint32_t len)
 	if (kvs_entry_get(&wlk, kvs, key) == 0U) {
 		uint32_t off = wlk.val_start;
 
-		return entry_read(&wlk, off, value, len);
+		return entry_raw_read(&wlk, off, value, len);
 	}
 
 	return -KVS_ENOENT;
@@ -912,6 +1009,8 @@ int kvs_mount(struct kvs *kvs)
 	const struct kvs_cfg *cfg = kvs->cfg;
 	struct kvs_data *data = kvs->data;
 	struct kvs_ent wlk;
+	uint8_t hdr[KVS_HDR_MAXSIZE];
+	uint32_t epoch;
 	bool last_blck_fnd = false;
 	int rc = 0;
 
@@ -935,39 +1034,40 @@ int kvs_mount(struct kvs *kvs)
 	entry_link(&wlk, kvs);
 	for (int i = 0; i < cfg->bcnt; i++) {
 		wlk.start = i * cfg->bsz;
-		if (entry_get_info(&wlk) == 0) {
-			struct block_start_ext extra;
-			uint32_t rdlen = sizeof(struct block_start_ext);
-
-			rc = entry_read(&wlk, wlk.ext_start, &extra, rdlen);
-			if ((wlk.key_start - wlk.ext_start) != rdlen) {
-				rc = -KVS_EDEADLK;
-			}
-
-			if (rc != 0) {
-				goto end;
-			}
-
-			if ((extra.epoch >= data->epoch) || (!last_blck_fnd)) {
-				data->pos = wlk.start;
-				data->bend = wlk.start + cfg->bsz;
-				data->epoch = extra.epoch;
-				last_blck_fnd = true;
-			}
+		if (entry_get_info(&wlk) != 0) {
+			continue;
 		}
+
+		if (entry_raw_read(&wlk, 0, hdr, wlk.key_start - 1) != 0) {
+			continue;
+		}
+
+		if (ehdr_get_epoch(hdr, &epoch) != 0) {
+			continue;
+		}
+
+		if (last_blck_fnd && (epoch < data->epoch)) {
+			continue;
+		}
+
+		data->pos = wlk.start;
+		data->bend = wlk.start + cfg->bsz;
+		data->epoch = epoch;
+		last_blck_fnd = true;
 	}
+
+	uint32_t npos = data->pos;
 
 	wlk.next = data->pos;
 	wlk.start = wlk.next;
+	data->pos = data->bend; /* temporarily set data->pos to the block end */
 	while (entry_match_in_block(&wlk, NULL, NULL) == 0) {
-		data->pos = wlk.next;
+		npos = wlk.next;
 	}
 
+	data->pos = npos;
 	data->ready = true;
-
-end:
-	(void)kvs_dev_unlock(kvs);
-	return rc;
+	return kvs_dev_unlock(kvs);
 }
 
 int kvs_unmount(struct kvs *kvs)

@@ -22,16 +22,14 @@ message(STATUS "KVS_DIR = ${KVS_DIR}")
 assert_exists(KVS_DIR)
 
 if(CONFIG_KVS)
-
 zephyr_include_directories(
     ${KVS_DIR}/include
 )
-
 zephyr_library_sources(
     ${KVS_DIR}/src/kvs.c
 )
+endif()
 
-zephyr_library_sources(
+target_sources(app PRIVATE
     ./src/main.c
 )
-endif()

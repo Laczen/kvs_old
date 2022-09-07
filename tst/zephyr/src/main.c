@@ -146,7 +146,7 @@ ZTEST(kvs_tests, kvs_remount)
         zassert_true(rc == 0, "unmount failed [%d]", rc);
 }
 
-ZTEST(kvs_tests, kvs_gc)
+ZTEST(kvs_tests, zkvs_gc)
 {
         struct kvs *kvs = GET_KVS(test);
         uint32_t cnt, epoch;
