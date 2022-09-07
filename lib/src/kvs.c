@@ -406,13 +406,20 @@ static int entry_write(struct kvs_ent *ent, uint32_t off, const void *data,
 	return entry_raw_write(ent, off, data, len);
 }
 
-static int entry_add_init(uint8_t *hdr, struct kvs_ent *ent, uint32_t klen, uint32_t vlen)
+static int entry_add(struct kvs_ent *ent, const char *key, const void *value,
+		     uint32_t val_len)
 {
-	const uint32_t psz = ent->kvs->cfg->psz;
+	const struct kvs *kvs = ent->kvs;
+	const uint32_t psz = kvs->cfg->psz;
+	const size_t key_len = KVS_MIN(strlen(key), KVS_KEY_MAXSIZE);
+	struct kvs_data *data = kvs->data;
+	uint8_t hdr[KVS_HDR_MAXSIZE];
+	uint32_t hdr_len, entry_len, wpos;
+	int rc;
 
 	ent->key_start = 0U;
-	ent->val_start = klen;
-	ent->val_len = vlen;
+	ent->val_start = key_len;
+	ent->val_len = val_len;
 
 	hdr_len = ehdr_make(ent, hdr);
 	ent->key_start += hdr_len;
@@ -425,25 +432,6 @@ static int entry_add_init(uint8_t *hdr, struct kvs_ent *ent, uint32_t klen, uint
 	}
 
 	ent->crc32 = 0U;
-	return 0;
-}
-
-static int entry_add(struct kvs_ent *ent, const char *key, const void *value,
-		     uint32_t val_len)
-{
-	const struct kvs *kvs = ent->kvs;
-	const uint32_t psz = kvs->cfg->psz;
-	const size_t key_len = KVS_MIN(strlen(key), KVS_KEY_MAXSIZE);
-	struct kvs_data *data = kvs->data;
-	uint8_t hdr[KVS_HDR_MAXSIZE];
-	uint32_t hdr_len, entry_len, wpos;
-	int rc;
-
-	rc = entry_add_init(hdr, ent, key_len, val_len);
-	if (rc != 0) {
-		goto end;
-	}
-
 	ent->start = data->pos;
 	ent->next = ent->start + entry_len;
 	data->pos = ent->next;
