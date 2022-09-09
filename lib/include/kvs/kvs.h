@@ -18,7 +18,7 @@
  *              | | |-------- 1: includes value, 0 no value
  *              | |---------- 1: includes epoch counter, 0 no epoch counter
  *              |------------ odd parity bit (makes byte 1 odd parity)
- *     byte 1: key length - 1 (key length is limited to 256 bytes)
+ *     byte 1: key length (key length is limited to 255 bytes)
  *     byte 2-5: epoch counter (if included)
  *     byte 2-5 or 6-9: value length bytes.
  *     byte ... (key length): key bytes

@@ -58,17 +58,6 @@ static int comp(void *ctx, uint32_t off, const void *data, uint32_t len)
 DEFINE_KVS(test, 256, 5, 1, NULL, (void *)&pbuf, 4, read, prog, comp, NULL,
            NULL, NULL, NULL, NULL);
 
-int kvs_walk_cb(const struct kvs_ent *ent, void *cb_arg)
-{
-        char buf[12];
-        uint32_t rdlen = KVS_MIN(sizeof(buf), ent->val_start - ent->key_start);
-
-        kvs_entry_read(ent, ent->key_start, buf, rdlen);
-        buf[KVS_MIN(11, ent->val_start - ent->key_start)]= '\0';
-        printk("Found entry at %d named %s\n", ent->start, buf);
-        return 0;
-}
-
 ZTEST_SUITE(kvs_tests, NULL, NULL, NULL, NULL, NULL);
 
 ZTEST(kvs_tests, kvs_mount)
@@ -146,7 +135,49 @@ ZTEST(kvs_tests, kvs_remount)
         zassert_true(rc == 0, "unmount failed [%d]", rc);
 }
 
-ZTEST(kvs_tests, zkvs_gc)
+int kvs_walk_test_cb(const struct kvs_ent *ent, void *cb_arg)
+{
+        uint32_t *cnt = (uint32_t *)cb_arg;
+
+        (*cnt) += 1;
+        return 0;
+}
+
+ZTEST(kvs_tests, kvs_walk)
+{
+        struct kvs *kvs = GET_KVS(test);
+        uint32_t cnt, en_cnt;
+        int rc;
+
+        cnt = 0U;
+        (void)kvs_unmount(kvs);
+        rc = kvs_mount(kvs);
+        zassert_false(rc != 0, "mount failed [%d]", rc);
+
+        /*
+         * write one entry "/wlk_tst", walk searching for "/wlk_tst" and
+         * count appearances, this should be one
+         */
+        rc = kvs_write(kvs, "/wlk_tst", &cnt, sizeof(cnt));
+        zassert_false(rc != 0, "write failed [%d]", rc);
+        en_cnt = 0U;
+        rc = kvs_walk(kvs, "/wlk_tst", kvs_walk_test_cb, (void *)&en_cnt);
+        zassert_false(rc != 0, "walk failed [%d]", rc);
+        zassert_false(en_cnt != 1U, "wrong walk result value");
+
+        /*
+         * write another entry "/wlk_tst", walk searching for "/wlk_tst" and
+         * count appearances, this should now be two
+         */
+        rc = kvs_write(kvs, "/wlk_tst", &cnt, sizeof(cnt));
+        zassert_false(rc != 0, "write failed [%d]", rc);
+        en_cnt = 0U;
+        rc = kvs_walk(kvs, "/wlk_tst", kvs_walk_test_cb, (void *)&en_cnt);
+        zassert_false(rc != 0, "walk failed [%d]", rc);
+        zassert_false(en_cnt != 2U, "wrong walk result value");
+}
+
+ZTEST(kvs_tests, kvs_gc)
 {
         struct kvs *kvs = GET_KVS(test);
         uint32_t cnt, epoch;
