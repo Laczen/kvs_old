@@ -55,8 +55,8 @@ static int comp(void *ctx, uint32_t off, const void *data, uint32_t len)
 	return 0;
 }
 
-DEFINE_KVS(test, 256, 5, 1, NULL, (void *)&pbuf, 4, read, prog, comp, NULL,
-	   NULL, NULL, NULL, NULL);
+DEFINE_KVS(test, 256, 5, 1, NULL, (void *)&pbuf, sizeof(pbuf), read, prog, comp,
+           NULL, NULL, NULL, NULL, NULL);
 
 ZTEST_SUITE(kvs_tests, NULL, NULL, NULL, NULL, NULL);
 
