@@ -101,13 +101,13 @@ enum kvs_error_codes
  *
  */
 struct kvs_ent {
-	struct kvs *kvs;     /**< pointer to the kvs */
-	uint32_t start;	     /**< start position of the entry */
-	uint32_t next;	     /**< position of the next entry */
-	uint32_t key_start;  /**< start of key bytes (from start)*/
-	uint32_t val_start;  /**< start of value bytes (from start)*/
-	uint32_t val_len;    /**< value length */
-	uint32_t crc32;	     /**< crc32 calculated over the entry */
+	struct kvs *kvs;    /**< pointer to the kvs */
+	uint32_t start;	    /**< start position of the entry */
+	uint32_t next;	    /**< position of the next entry */
+	uint32_t key_start; /**< start of key bytes (from start)*/
+	uint32_t val_start; /**< start of value bytes (from start)*/
+	uint32_t val_len;   /**< value length */
+	uint32_t crc32;	    /**< crc32 calculated over the entry */
 };
 
 /**
@@ -237,28 +237,28 @@ struct kvs {
  * @brief Helper macro to define a kvs
  *
  */
-#define DEFINE_KVS(_name, _bsz, _bcnt, _bspr, _ctx, _pbuf, _psz, _read, _prog,  \
-		   _comp, _sync, _init, _release, _lock, _unlock)               \
-	struct kvs_cfg _name##_kvs_cfg = {                                      \
-		.bsz = _bsz,                                                    \
-		.bcnt = _bcnt,                                                  \
-		.bspr = _bspr,                                                  \
-		.ctx = _ctx,                                                    \
-		.pbuf = _pbuf,                                                  \
-		.psz = _psz,                                                    \
-		.read = _read,                                                  \
-		.prog = _prog,                                                  \
-		.comp = _comp,                                                  \
-		.sync = _sync,                                                  \
-		.init = _init,                                                  \
-		.release = _release,                                            \
-		.lock = _lock,                                                  \
-		.unlock = _unlock,                                              \
-	};                                                                      \
-	struct kvs_data _name##_kvs_data;                                       \
-	struct kvs _name##_kvs = {                                              \
-		.cfg = &_name##_kvs_cfg,                                        \
-		.data = &_name##_kvs_data,                                      \
+#define DEFINE_KVS(_name, _bsz, _bcnt, _bspr, _ctx, _pbuf, _psz, _read, _prog, \
+		   _comp, _sync, _init, _release, _lock, _unlock)              \
+	struct kvs_cfg _name##_kvs_cfg = {                                     \
+		.bsz = _bsz,                                                   \
+		.bcnt = _bcnt,                                                 \
+		.bspr = _bspr,                                                 \
+		.ctx = _ctx,                                                   \
+		.pbuf = _pbuf,                                                 \
+		.psz = _psz,                                                   \
+		.read = _read,                                                 \
+		.prog = _prog,                                                 \
+		.comp = _comp,                                                 \
+		.sync = _sync,                                                 \
+		.init = _init,                                                 \
+		.release = _release,                                           \
+		.lock = _lock,                                                 \
+		.unlock = _unlock,                                             \
+	};                                                                     \
+	struct kvs_data _name##_kvs_data;                                      \
+	struct kvs _name##_kvs = {                                             \
+		.cfg = &_name##_kvs_cfg,                                       \
+		.data = &_name##_kvs_data,                                     \
 	}
 
 /**
@@ -388,4 +388,4 @@ int kvs_walk_unique(const struct kvs *kvs, const char *key,
 #endif
 
 #endif /* KVS_H_ */
-/** @} */
+       /** @} */

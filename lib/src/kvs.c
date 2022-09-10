@@ -129,8 +129,8 @@ static bool ehdr_has_odd_parity(const uint8_t *hdr)
 
 static void ehdr_set_odd_parity(uint8_t *hdr)
 {
-    	if (!ehdr_has_odd_parity(hdr)) {
-        	*hdr ^= KVS_PARITY_BITMASK;
+	if (!ehdr_has_odd_parity(hdr)) {
+		*hdr ^= KVS_PARITY_BITMASK;
 	}
 }
 
@@ -180,7 +180,7 @@ static int ehdr_get_epoch(const uint8_t *hdr, uint32_t *epoch)
 	}
 
 	*epoch = (uint32_t)hdr[2] + (uint32_t)(hdr[3] << 8) +
-	         (uint32_t)(hdr[4] << 16) + (uint32_t)(hdr[5] << 24);
+		 (uint32_t)(hdr[4] << 16) + (uint32_t)(hdr[5] << 24);
 	return 0;
 }
 
@@ -329,15 +329,14 @@ struct read_cb {
 };
 
 static int read_cb_entry(const void *ctx, uint32_t off, void *data,
-			     uint32_t len)
+			 uint32_t len)
 {
 	struct kvs_ent *ent = (struct kvs_ent *)(ctx);
 
 	return entry_read(ent, off, data, len);
 }
 
-static int read_cb_ptr(const void *ctx, uint32_t off, void *data,
-			     uint32_t len)
+static int read_cb_ptr(const void *ctx, uint32_t off, void *data, uint32_t len)
 {
 	uint8_t *src = (uint8_t *)ctx;
 
@@ -345,8 +344,7 @@ static int read_cb_ptr(const void *ctx, uint32_t off, void *data,
 	return 0;
 }
 
-static bool key_starts_with(const struct kvs_ent *ent,
-			    const struct read_cb *rd)
+static bool key_starts_with(const struct kvs_ent *ent, const struct read_cb *rd)
 {
 	if (rd->len > (ent->val_start - ent->key_start)) {
 		return false;
@@ -407,7 +405,8 @@ static int entry_write(struct kvs_ent *ent, uint32_t off, const void *data,
 	return entry_raw_write(ent, off, data, len);
 }
 
-static int entry_write_hdr(struct kvs_ent *ent, uint32_t key_len, uint32_t val_len)
+static int entry_write_hdr(struct kvs_ent *ent, uint32_t key_len,
+			   uint32_t val_len)
 {
 	const struct kvs *kvs = ent->kvs;
 	const uint32_t psz = kvs->cfg->psz;
@@ -455,7 +454,8 @@ static int entry_write_crc(struct kvs_ent *ent)
 	return entry_raw_write(ent, off, &ent->crc32, KVS_CRCSIZE);
 }
 
-static int entry_write_data(struct kvs_ent *ent, uint32_t dstart, const struct read_cb *drd_cb)
+static int entry_write_data(struct kvs_ent *ent, uint32_t dstart,
+			    const struct read_cb *drd_cb)
 {
 	uint32_t len, off;
 	uint8_t buf[KVS_BUFSIZE];
@@ -529,7 +529,6 @@ static int entry_add(struct kvs_ent *ent, const char *key, const void *value,
 	};
 
 	return entry_append(ent, &krd_cb, &vrd_cb);
-
 }
 
 static int entry_copy(const struct kvs_ent *ent)
@@ -652,7 +651,8 @@ static int entry_match_in_block(struct kvs_ent *ent,
 }
 
 static int entry_zigzag_walk(struct kvs_ent *ent,
-			     bool (*match)(const struct kvs_ent *ent, void *arg),
+			     bool (*match)(const struct kvs_ent *ent,
+					   void *arg),
 			     void *arg)
 {
 	const struct kvs *kvs = ent->kvs;
@@ -798,7 +798,7 @@ static int unique_walk_cb(const struct kvs_ent *ent, void *cb_arg)
 }
 
 static int entry_walk_unique(const struct kvs *kvs, const struct read_cb *rd,
- 			     const struct entry_cb *cb, uint32_t bcnt)
+			     const struct entry_cb *cb, uint32_t bcnt)
 {
 	const struct entry_cb unique_entry_cb = {
 		.cb = unique_walk_cb,
