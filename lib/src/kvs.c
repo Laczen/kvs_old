@@ -578,9 +578,7 @@ static int entry_crc32_verify(struct kvs_ent *ent)
 		goto end;
 	}
 
-	if (crc32 == crc32r) {
-		rc = 0U;
-	} else {
+	if (crc32 != crc32r) {
 		rc = -KVS_EIO;
 	}
 
@@ -751,46 +749,6 @@ struct entry_cb {
 	int (*cb)(const struct kvs_ent *entry, void *cb_arg);
 };
 
-static int entry_walk_unique(const struct kvs *kvs, const struct read_cb *rd,
-			     const struct entry_cb *cb, uint32_t bcnt)
-{
-	const struct kvs_cfg *cfg = kvs->cfg;
-	const struct kvs_data *data = kvs->data;
-	const uint32_t end = cfg->bcnt * cfg->bsz;
-	struct kvs_ent wlk;
-	int rc;
-
-	entry_link(&wlk, kvs);
-	wlk.next = (data->bend < end) ? data->bend : 0U;
-	for (int i = 0; i < bcnt; i++) {
-		wlk.start = wlk.next;
-		while (entry_match_in_block(&wlk, match_key_start,
-					    (void *)rd) == 0) {
-			const struct read_cb rdwlkkey = {
-				.ctx = (void *)&wlk,
-				.len = wlk.val_start - wlk.key_start,
-				.off = wlk.key_start,
-				.read = read_cb_entry,
-			};
-			struct kvs_ent last;
-
-			if (entry_get(&last, kvs, &rdwlkkey) != 0) {
-				continue;
-			}
-
-			if ((last.start == wlk.start) && (last.val_len != 0U)) {
-				rc = cb->cb(&wlk, cb->cb_arg);
-				if (rc != 0) {
-					goto end;
-				}
-			}
-		}
-		wlk.next = (wlk.next < end) ? wlk.next : 0U;
-	}
-end:
-	return rc;
-}
-
 static int entry_walk(const struct kvs *kvs, const struct read_cb *rd,
 		      const struct entry_cb *cb, uint32_t bcnt)
 {
@@ -815,6 +773,39 @@ static int entry_walk(const struct kvs *kvs, const struct read_cb *rd,
 	}
 end:
 	return rc;
+}
+
+static int unique_walk_cb(const struct kvs_ent *ent, void *cb_arg)
+{
+	const struct entry_cb *cb = (struct entry_cb *)cb_arg;
+	const struct read_cb rdkey = {
+		.ctx = (void *)ent,
+		.len = ent->val_start - ent->key_start,
+		.off = ent->key_start,
+		.read = read_cb_entry,
+	};
+	struct kvs_ent last;
+
+	if (entry_get(&last, ent->kvs, &rdkey) != 0) {
+		return 0;
+	}
+
+	if ((last.start == ent->start) && (last.val_len != 0U)) {
+		return cb->cb(ent, cb->cb_arg);
+	}
+
+	return 0;
+}
+
+static int entry_walk_unique(const struct kvs *kvs, const struct read_cb *rd,
+ 			     const struct entry_cb *cb, uint32_t bcnt)
+{
+	const struct entry_cb unique_entry_cb = {
+		.cb = unique_walk_cb,
+		.cb_arg = (void *)cb,
+	};
+
+	return entry_walk(kvs, rd, &unique_entry_cb, bcnt);
 }
 
 static int compact_walk_cb(const struct kvs_ent *ent, void *cb_arg)

@@ -8,8 +8,8 @@
  * @{
  * @brief       Key Value Store
  *
- * Generic key value store interface to store key-value items on different kind
- * of memory devices e.g. RAM, FLASH (nor or nand), EEPROM, ...
+ * Generic key value store interface to store and retrieve key-value items on
+ * different kind of memory devices e.g. RAM, FLASH (nor or nand), EEPROM, ...
  *
  * Key-value items are stored as:
  *     byte 0: |. . . ... ..|
@@ -34,7 +34,7 @@
  *
  * The configurable block size needs to be a power of 2. The block size limits
  * the maximum size of an entry as it needs to fit within one block. The block
- * size is not limited to a erase block size of the memory device, this allows
+ * size is not limited to an erase block size of the memory device, this allows
  * using memory devices with non constant erase block sizes. However in this
  * last case carefull parameter selection is required to guarantee that there
  * will be no loss of data.
@@ -388,4 +388,4 @@ int kvs_walk_unique(const struct kvs *kvs, const char *key,
 #endif
 
 #endif /* KVS_H_ */
-       /** @} */
+/** @} */
