@@ -219,9 +219,10 @@ struct kvs_cfg {
  */
 struct kvs_data {
 	bool ready;
-	uint32_t pos;	/**< current memory (write) position */
-	uint32_t bend;	/**< current memory (write) block end */
-	uint32_t epoch; /**< current erase counter */
+	bool gc_disabled; /**< garbage collection is disabled */
+	uint32_t pos;	  /**< current memory (write) position */
+	uint32_t bend;	  /**< current memory (write) block end */
+	uint32_t epoch;   /**< current erase counter */
 };
 
 /**
@@ -294,6 +295,23 @@ int kvs_unmount(struct kvs *kvs);
  * @return 0 on success, negative errorcode on error
  */
 int kvs_compact(const struct kvs *kvs);
+
+/**
+ * @brief disable key value store garbage collection (no longer guarantees that
+ *        all data is kept).
+ * @param[in] kvs pointer to key value store
+ *
+ * @return 0 on success, negative errorcode on error
+ */
+int kvs_disable_gc(const struct kvs *kvs);
+
+/**
+ * @brief enable key value store garbage collection.
+ * @param[in] kvs pointer to key value store
+ *
+ * @return 0 on success, negative errorcode on error
+ */
+int kvs_enable_gc(const struct kvs *kvs);
 
 /**
  * @brief get a entry from the key value store

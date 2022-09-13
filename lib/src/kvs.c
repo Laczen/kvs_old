@@ -901,7 +901,12 @@ int kvs_write(const struct kvs *kvs, const char *key, const void *value,
 		if (rc == 0) {
 			goto end;
 		}
-		(void)compact(kvs, cfg->bcnt - cnt);
+
+		if (kvs->data->gc_disabled) {
+			wblock_advance(kvs);
+		} else {
+			(void)compact(kvs, cfg->bcnt - cnt);
+		}
 		cnt--;
 	}
 
@@ -1072,7 +1077,7 @@ int kvs_unmount(struct kvs *kvs)
 
 int kvs_compact(const struct kvs *kvs)
 {
-	if (kvs == NULL) {
+	if ((kvs == NULL) || (!kvs->data->ready))  {
 		return -KVS_EINVAL;
 	}
 
@@ -1084,6 +1089,42 @@ int kvs_compact(const struct kvs *kvs)
 	}
 
 	rc = compact(kvs, kvs->cfg->bcnt - kvs->cfg->bspr);
+	(void)kvs_dev_unlock(kvs);
+	return rc;
+}
+
+int kvs_disable_gc(const struct kvs *kvs)
+{
+	if (kvs == NULL) {
+		return -KVS_EINVAL;
+	}
+
+	int rc;
+
+	rc = kvs_dev_lock(kvs);
+	if (rc != 0) {
+		return rc;
+	}
+
+	kvs->data->gc_disabled = true;
+	(void)kvs_dev_unlock(kvs);
+	return rc;
+}
+
+int kvs_enable_gc(const struct kvs *kvs)
+{
+	if (kvs == NULL) {
+		return -KVS_EINVAL;
+	}
+
+	int rc;
+
+	rc = kvs_dev_lock(kvs);
+	if (rc != 0) {
+		return rc;
+	}
+
+	kvs->data->gc_disabled = false;
 	(void)kvs_dev_unlock(kvs);
 	return rc;
 }

@@ -1,0 +1,19 @@
+# Kconfig - key value store - kvs
+#
+# Copyright (c) 2022 Laczen
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+config KVS
+	bool "Key Value Store - kvs"
+	help
+	  Enable support of kvs.
+
+if KVS
+
+module = KVS
+module-str = kvs
+source "subsys/logging/Kconfig.template.log_config"
+
+endif # SFCB
