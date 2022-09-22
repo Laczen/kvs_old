@@ -606,26 +606,30 @@ static int entry_copy(const struct kvs_ent *ent)
 	return entry_append(&cp_ent, &krd_cb, &vrd_cb);
 }
 
-static bool key_starts_with(const struct kvs_ent *ent, const struct read_cb *rd)
+static bool entry_comp(const struct kvs_ent *ent, uint32_t off, uint32_t len,
+		       const struct read_cb *rd)
 {
-	if (rd->len > (ent->val_start - ent->key_start)) {
+	if (len < rd->len) {
 		return false;
 	}
 
+	if ((rd->len == 0U) || (rd->ctx == NULL)) {
+		return (len == 0U);
+	}
+
 	uint8_t bufe[KVS_BUFSIZE], bufr[KVS_BUFSIZE];
-	uint32_t len = rd->len;
-	uint32_t off = 0U;
+	uint32_t rd_off = 0U;
 	int rc;
 
 	while (len != 0U) {
 		uint32_t rdlen = KVS_MIN(len, KVS_BUFSIZE);
 
-		rc = entry_read(ent, ent->key_start + off, bufe, rdlen);
+		rc = entry_read(ent, off + rd_off, bufe, rdlen);
 		if (rc != 0) {
 			return false;
 		}
 
-		rc = rd->read(rd->ctx, rd->off + off, bufr, rdlen);
+		rc = rd->read(rd->ctx, rd->off + rd_off, bufr, rdlen);
 		if (rc != 0) {
 			return false;
 		}
@@ -634,11 +638,27 @@ static bool key_starts_with(const struct kvs_ent *ent, const struct read_cb *rd)
 			return false;
 		}
 
-		off += rdlen;
+		rd_off += rdlen;
 		len -= rdlen;
 	}
 
 	return true;
+}
+
+static bool key_starts_with(const struct kvs_ent *ent, const struct read_cb *rd)
+{
+	uint32_t off = ent->key_start;
+	uint32_t len = ent->val_start - ent->key_start;
+
+	return entry_comp(ent, off, len, rd);
+}
+
+static bool value_equal(const struct kvs_ent *ent, const struct read_cb *rd)
+{
+	uint32_t off = ent->val_start;
+	uint32_t len = ent->fil_start - ent->val_start;
+
+	return entry_comp(ent, off, len, rd);
 }
 
 static int entry_match_in_block(struct kvs_ent *ent,
@@ -917,8 +937,23 @@ int kvs_write(const struct kvs *kvs, const char *key, const void *value,
 		return -KVS_EINVAL;
 	}
 
-	const struct kvs_cfg *cfg = kvs->cfg;
 	struct kvs_ent ent;
+
+	if (entry_from_key(&ent, kvs, key) == 0) {
+		const struct read_cb rdval = {
+			.ctx = (void *)value,
+			.len = len,
+			.off = 0U,
+			.read = read_cb_ptr,
+		};
+
+		if (value_equal(&ent, &rdval)) {
+		 	return 0;
+		}
+
+	};
+
+	const struct kvs_cfg *cfg = kvs->cfg;
 	uint32_t cnt = cfg->bcnt - cfg->bspr;
 	int rc;
 

@@ -232,7 +232,7 @@ ZTEST(kvs_tests, f_kvs_gc)
 	zassert_false(rc != 0, "read failed [%d]", rc);
 	zassert_false(cnt != 0U, "wrong read value");
 
-	rc = kvs_write(kvs, "/cnt", NULL, 0);
+	rc = kvs_delete(kvs, "/cnt");
 	zassert_false(rc != 0, "write failed [%d]", rc);
 	wrapcnt = kvs->data->wrapcnt;
 
