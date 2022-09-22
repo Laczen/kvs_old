@@ -7,7 +7,8 @@ cmake_minimum_required(VERSION 3.13.1)
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 
 # Path to kvs library
-set(KVS_DIR "${ZEPHYR_KVS_MODULE_DIR}/lib")
+get_filename_component(TOP_DIR ${CMAKE_CURRENT_SOURCE_DIR} DIRECTORY)
+set(KVS_DIR "${TOP_DIR}/lib")
 message(STATUS "KVS_DIR = ${KVS_DIR}")
 assert_exists(KVS_DIR)
 

@@ -107,7 +107,7 @@ ZTEST(kvs_tests, b_kvs_rw)
 ZTEST(kvs_tests, c_kvs_remount)
 {
 	struct kvs *kvs = GET_KVS(test);
-	uint32_t cnt, pos, bend, epoch;
+	uint32_t cnt, pos, bend, wrapcnt;
 	int rc;
 
 	(void)kvs_unmount(kvs);
@@ -120,7 +120,7 @@ ZTEST(kvs_tests, c_kvs_remount)
 
 	pos = kvs->data->pos;
 	bend = kvs->data->bend;
-	epoch = kvs->data->epoch;
+	wrapcnt = kvs->data->wrapcnt;
 
 	rc = kvs_unmount(kvs);
 	zassert_true(rc == 0, "unmount failed [%d]", rc);
@@ -129,7 +129,7 @@ ZTEST(kvs_tests, c_kvs_remount)
 	zassert_false(rc != 0, "mount failed [%d]", rc);
 	zassert_false(pos != kvs->data->pos, "wrong kvs->data->pos");
 	zassert_false(bend != kvs->data->bend, "wrong kvs->data->bend");
-	zassert_false(epoch != kvs->data->epoch, "wrong kvs->data->epoch");
+	zassert_false(wrapcnt != kvs->data->wrapcnt, "wrong kvs->data->wrapcnt");
 
 	rc = kvs_unmount(kvs);
 	zassert_true(rc == 0, "unmount failed [%d]", rc);
@@ -207,7 +207,7 @@ ZTEST(kvs_tests, e_kvs_compact)
 ZTEST(kvs_tests, f_kvs_gc)
 {
 	struct kvs *kvs = GET_KVS(test);
-	uint32_t cnt, epoch;
+	uint32_t cnt, wrapcnt;
 	int rc;
 
 	(void)kvs_unmount(kvs);
@@ -217,9 +217,9 @@ ZTEST(kvs_tests, f_kvs_gc)
 	cnt = 0U;
 	rc = kvs_write(kvs, "/cnt", &cnt, sizeof(cnt));
 	zassert_false(rc != 0, "write failed [%d]", rc);
-	epoch = kvs->data->epoch;
+	wrapcnt = kvs->data->wrapcnt;
 
-	while (kvs->data->epoch == epoch) {
+	while (kvs->data->wrapcnt == wrapcnt) {
 		cnt++;
 		rc = kvs_write(kvs, "/cnt_", &cnt, sizeof(cnt));
 		zassert_false(rc != 0, "write failed [%d]", rc);
@@ -234,9 +234,9 @@ ZTEST(kvs_tests, f_kvs_gc)
 
 	rc = kvs_write(kvs, "/cnt", NULL, 0);
 	zassert_false(rc != 0, "write failed [%d]", rc);
-	epoch = kvs->data->epoch;
+	wrapcnt = kvs->data->wrapcnt;
 
-	while (kvs->data->epoch == epoch) {
+	while (kvs->data->wrapcnt == wrapcnt) {
 		cnt++;
 		rc = kvs_write(kvs, "/cnt_", &cnt, sizeof(cnt));
 		zassert_false(rc != 0, "write failed [%d]", rc);
@@ -245,6 +245,26 @@ ZTEST(kvs_tests, f_kvs_gc)
 	rc = kvs_read(kvs, "/cnt", &cnt, sizeof(cnt));
 	zassert_false(rc == 0, "read succeeded on deleted item");
 
+	rc = kvs_unmount(kvs);
+	zassert_true(rc == 0, "unmount failed [%d]", rc);
+}
+
+ZTEST(kvs_tests, g_kvs_erase)
+{
+	struct kvs *kvs = GET_KVS(test);
+	uint32_t en_cnt = 0U;
+	int rc;
+
+	(void)kvs_unmount(kvs);
+	rc = kvs_erase(kvs);
+	zassert_false(rc != 0, "erase failed [%d]", rc);
+	rc = kvs_mount(kvs);
+	zassert_false(rc != 0, "mount failed [%d]", rc);
+	zassert_false(kvs->data->pos != 0U, "wrong kvs->data->pos");
+	zassert_false(kvs->data->wrapcnt != 0U, "wrong kvs->data->wrapcnt");
+	rc = kvs_walk(kvs, "", kvs_walk_test_cb, (void *)&en_cnt);
+	zassert_false(rc != 0, "walk failed [%d]", rc);
+	zassert_false(en_cnt != 0U, "found data on erased kvs");
 	rc = kvs_unmount(kvs);
 	zassert_true(rc == 0, "unmount failed [%d]", rc);
 }

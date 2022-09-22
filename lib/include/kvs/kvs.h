@@ -8,29 +8,32 @@
  * @{
  * @brief       Key Value Store
  *
- * Generic key value store interface to store and retrieve key-value items on
+ * Generic key value store interface to store and retrieve key-value entries on
  * different kind of memory devices e.g. RAM, FLASH (nor or nand), EEPROM, ...
  *
- * Key-value items are stored as:
- *     byte 0: |. . . ... ..|
- *              | | |  |   |- value length bits 0-3: 1-4 value length byte
- *              | | |  |----- unused
- *              | | |-------- 1: includes value, 0 no value
- *              | |---------- 1: includes epoch counter, 0 no epoch counter
- *              |------------ odd parity bit (makes byte 1 odd parity)
- *     byte 1: key length (key length is limited to 255 bytes)
- *     byte 2-5: epoch counter (if included)
- *     byte 2-5 or 6-9: value length bytes.
- *     byte ... (key length): key bytes
- *     byte ... (value length): value bytes
- *     byte ... : fill bytes to meet alignment specified by the memory device
- *     byte ... : CRC32 value
+ * Key-value entries are stored as:
+ *   Entry header: the maximum length of the header is 13 bytes.
+ *     byte 0: |. . .. .. ..|
+ *              | | |  |  |-- value length bits 0-3: value length is 1-4 bytes
+ *              | | |  |----- key length bits 0-3: key length is 1-4 bytes
+ *              | | |------ unused
+ *              | |-------- 1: includes wrap/erase counter, 0 no wrap counter
+ *              |---------- odd parity bit (makes byte 0 odd parity)
+ *     key length bytes
+ *     value length bytes
+ *     wrap counter (if included, 4 bytes)
+ *   Entry data:
+ *     key bytes (key length)
+ *     value bytes (value length)
+ *     fill bytes
+ *   Entry footer:
+ *     CRC32 value calculated over entry header and data (excluding fill).
  *
- * Items entries are written sequentially to blocks that have a configurable
- * size. At the beginning of each block a epoch counter is added to the entry.
- * The epoch counter is increased each time the memory wraps around. When a
- * new block is started the key value store verifies whether it needs to move
- * old entries to keep a copy and does so if required.
+ * Entries are written sequentially to blocks that have a configurable size. At
+ * the beginning of each block a wrap counter is added to the entry. The wrap
+ * counter is increased each time the memory wraps around. When a new block is
+ * started the key value store verifies whether it needs to move old entries to
+ * keep a copy and does so if required.
  *
  * The configurable block size needs to be a power of 2. The block size limits
  * the maximum size of an entry as it needs to fit within one block. The block
@@ -54,8 +57,9 @@ extern "C" {
 
 #define KVS_MIN(a, b)		  (a < b ? a : b)
 #define KVS_MAX(a, b)		  (a < b ? b : a)
-#define KVS_ALIGNUP(num, align)	  (((num) + (align - 1)) & ~((align)-1))
-#define KVS_ALIGNDOWN(num, align) ((num) & ~((align)-1))
+#define KVS_ALIGNUP(num, align)	  (((num) + ((align) - 1)) & ~((align) - 1))
+#define KVS_ALIGNDOWN(num, align) ((num) & ~((align) - 1))
+#define KVS_ASSERT(a)
 
 /**
  * @brief KVS interface definition
@@ -69,16 +73,12 @@ extern "C" {
 enum kvs_constants
 {
 	KVS_PARITY_BITMASK = 0b10000000,
-	KVS_EPOCH_BITMASK = 0b01000000,
-	KVS_VALUE_BITMASK = 0b00100000,
-	KVS_VALEN_BITMASK = 0b00000011,
-	KVS_HDR_MINSIZE = 2,
-	KVS_HDR_MAXSIZE = 10,
-	KVS_EPOCHSIZE = 4,
+	KVS_WRAPCNT_BITMASK = 0b01000000,
+	KVS_HDR_BUFSIZE = 16, /* should be larger than maximum header length */
+	KVS_BUFSIZE = 16,
+	KVS_WRAPCNTSIZE = 4,
 	KVS_CRCSIZE = 4,
 	KVS_FILLCHAR = 0b01100110,
-	KVS_BUFSIZE = 16,
-	KVS_KEY_MAXSIZE = 255,
 };
 
 /**
@@ -104,9 +104,9 @@ struct kvs_ent {
 	struct kvs *kvs;    /**< pointer to the kvs */
 	uint32_t start;	    /**< start position of the entry */
 	uint32_t next;	    /**< position of the next entry */
-	uint32_t key_start; /**< start of key bytes (from start)*/
-	uint32_t val_start; /**< start of value bytes (from start)*/
-	uint32_t val_len;   /**< value length */
+	uint32_t key_start; /**< start of key bytes (from start) */
+	uint32_t val_start; /**< start of value bytes (from start) */
+	uint32_t fil_start; /**< start of fill bytes (from start) */
 	uint32_t crc32;	    /**< crc32 calculated over the entry */
 };
 
@@ -118,13 +118,13 @@ struct kvs_ent {
  */
 
 struct kvs_cfg {
-	const uint32_t bsz;  /**< block or sector size (byte) */
-	const uint32_t bcnt; /**< block count (including spare blocks) */
-	const uint32_t bspr; /**< spare block count */
+	const uint32_t bsz; 	/**< block or sector size (byte), power of 2! */
+	const uint32_t bcnt;    /**< block count (including spare blocks) */
+	const uint32_t bspr;    /**< spare block count */
 
-	void *ctx;	    /**< opaque context pointer */
-	void *pbuf;	    /**< pointer to prog buffer */
-	const uint32_t psz; /**< prog buffer size (byte) */
+	void *ctx;	        /**< opaque context pointer */
+	void *pbuf;	        /**< pointer to prog buffer */
+	const uint32_t psz;  	/**< prog buffer size (byte), power of 2! */
 
 	/**
 	 * @brief read from memory device
@@ -222,7 +222,7 @@ struct kvs_data {
 	bool gc_disabled; /**< garbage collection is disabled */
 	uint32_t pos;	  /**< current memory (write) position */
 	uint32_t bend;	  /**< current memory (write) block end */
-	uint32_t epoch;   /**< current erase counter */
+	uint32_t wrapcnt; /**< current wrap/erase counter */
 };
 
 /**
@@ -239,14 +239,14 @@ struct kvs {
  *
  */
 #define DEFINE_KVS(_name, _bsz, _bcnt, _bspr, _ctx, _pbuf, _psz, _read, _prog, \
-		   _comp, _sync, _init, _release, _lock, _unlock)              \
+		   _comp, _sync, _init, _release, _lock, _unlock)	       \
 	struct kvs_cfg _name##_kvs_cfg = {                                     \
-		.bsz = _bsz,                                                   \
+		.bsz = _bsz,		                                       \
 		.bcnt = _bcnt,                                                 \
 		.bspr = _bspr,                                                 \
 		.ctx = _ctx,                                                   \
 		.pbuf = _pbuf,                                                 \
-		.psz = _psz,                                                   \
+		.psz = _psz,                                         	       \
 		.read = _read,                                                 \
 		.prog = _prog,                                                 \
 		.comp = _comp,                                                 \
@@ -287,6 +287,17 @@ int kvs_mount(struct kvs *kvs);
 int kvs_unmount(struct kvs *kvs);
 
 /**
+ * @brief erase the key value store, should be called on a unmounted fs.
+ *        Overwrites the memory backend with a preset value (KVS_FILLCHAR) so
+ *        that it is sure that no data is left in the memory backend.
+ *
+ * @param[in] kvs pointer to key value store
+ *
+ * @return 0 on success, negative errorcode on error
+ */
+int kvs_erase(struct kvs *kvs);
+
+/**
  * @brief compact the key value store (refreshes key value store and minimizes
  *        occupied flash).
  *
@@ -295,23 +306,6 @@ int kvs_unmount(struct kvs *kvs);
  * @return 0 on success, negative errorcode on error
  */
 int kvs_compact(const struct kvs *kvs);
-
-/**
- * @brief disable key value store garbage collection (no longer guarantees that
- *        all data is kept).
- * @param[in] kvs pointer to key value store
- *
- * @return 0 on success, negative errorcode on error
- */
-int kvs_disable_gc(const struct kvs *kvs);
-
-/**
- * @brief enable key value store garbage collection.
- * @param[in] kvs pointer to key value store
- *
- * @return 0 on success, negative errorcode on error
- */
-int kvs_enable_gc(const struct kvs *kvs);
 
 /**
  * @brief get a entry from the key value store
