@@ -609,12 +609,12 @@ static int entry_copy(const struct kvs_ent *ent)
 static bool entry_comp(const struct kvs_ent *ent, uint32_t off, uint32_t len,
 		       const struct read_cb *rd)
 {
-	if (len < rd->len) {
+	if (rd->len != len) {
 		return false;
 	}
 
 	if ((rd->len == 0U) || (rd->ctx == NULL)) {
-		return (len == 0U);
+		return true;
 	}
 
 	uint8_t bufe[KVS_BUFSIZE], bufr[KVS_BUFSIZE];
@@ -650,6 +650,18 @@ static bool key_starts_with(const struct kvs_ent *ent, const struct read_cb *rd)
 	uint32_t off = ent->key_start;
 	uint32_t len = ent->val_start - ent->key_start;
 
+	if (len < rd->len) {
+		return false;
+	}
+
+	return entry_comp(ent, off, rd->len, rd);
+}
+
+static bool key_equal(const struct kvs_ent *ent, const struct read_cb *rd)
+{
+	uint32_t off = ent->key_start;
+	uint32_t len = ent->val_start - ent->key_start;
+
 	return entry_comp(ent, off, len, rd);
 }
 
@@ -663,8 +675,8 @@ static bool value_equal(const struct kvs_ent *ent, const struct read_cb *rd)
 
 static int entry_match_in_block(struct kvs_ent *ent,
 				bool (*match)(const struct kvs_ent *ent,
-					      void *arg),
-				void *arg)
+					      const struct read_cb *rd),
+				const struct read_cb *rd)
 {
 	const struct kvs *kvs = ent->kvs;
 	const uint32_t bsz = kvs->cfg->bsz;
@@ -686,7 +698,7 @@ static int entry_match_in_block(struct kvs_ent *ent,
 			return 0;
 		}
 
-		if (match(ent, arg)) {
+		if (match(ent, rd)) {
 			return 0;
 		}
 	}
@@ -696,8 +708,8 @@ static int entry_match_in_block(struct kvs_ent *ent,
 
 static int entry_zigzag_walk(struct kvs_ent *ent,
 			     bool (*match)(const struct kvs_ent *ent,
-					   void *arg),
-			     void *arg)
+					   const struct read_cb *rd),
+			     const struct read_cb *rd)
 {
 	const struct kvs *kvs = ent->kvs;
 	const struct kvs_cfg *cfg = kvs->cfg;
@@ -713,7 +725,7 @@ static int entry_zigzag_walk(struct kvs_ent *ent,
 
 	for (int i = 0; i < bcnt; i++) {
 		wlk.start = wlk.next;
-		while (entry_match_in_block(&wlk, match, arg) == 0) {
+		while (entry_match_in_block(&wlk, match, rd) == 0) {
 			found = true;
 			memcpy(ent, &wlk, sizeof(struct kvs_ent));
 		}
@@ -737,38 +749,12 @@ static int entry_zigzag_walk(struct kvs_ent *ent,
 	return -KVS_ENOENT;
 }
 
-static bool match_key_start(const struct kvs_ent *ent, void *cb_arg)
-{
-	struct read_cb *arg = (struct read_cb *)cb_arg;
-
-	if ((arg->len == 0U) || (arg->ctx == NULL)) {
-		return true;
-	}
-
-	if (key_starts_with(ent, cb_arg)) {
-		return true;
-	}
-
-	return false;
-}
-
-static bool match_key_exact(const struct kvs_ent *ent, void *cb_arg)
-{
-	struct read_cb *arg = (struct read_cb *)cb_arg;
-
-	if ((ent->val_start - ent->key_start) != arg->len) {
-		return false;
-	}
-
-	return match_key_start(ent, cb_arg);
-}
-
 static int entry_get(struct kvs_ent *ent, const struct kvs *kvs,
 		     const struct read_cb *rdkey)
 {
 	entry_link(ent, kvs);
 
-	if (entry_zigzag_walk(ent, match_key_exact, (void *)rdkey) == 0) {
+	if (entry_zigzag_walk(ent, key_equal, rdkey) == 0) {
 		return 0;
 	}
 
@@ -807,8 +793,7 @@ static int entry_walk(const struct kvs *kvs, const struct read_cb *rd,
 	wlk.next = (data->bend < end) ? data->bend : 0U;
 	for (int i = 0; i < bcnt; i++) {
 		wlk.start = wlk.next;
-		while (entry_match_in_block(&wlk, match_key_start,
-					    (void *)rd) == 0) {
+		while (entry_match_in_block(&wlk, key_starts_with, rd) == 0) {
 			if (cb->skip(&wlk)) {
 				continue;
 			}
