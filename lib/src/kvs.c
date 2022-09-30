@@ -359,7 +359,7 @@ static bool entry_crc32_ok(const struct kvs_ent *ent, uint32_t dlen,
 	return true;
 }
 
-static int entry_get_info(struct kvs_ent *ent)
+static int entry_get_info(struct kvs_ent *ent, uint32_t *wrapcnt)
 {
 	const uint32_t bsz = ent->kvs->cfg->bsz;
 	const uint32_t psz = ent->kvs->cfg->psz;
@@ -385,6 +385,11 @@ static int entry_get_info(struct kvs_ent *ent)
 
 	if (!entry_crc32_ok(ent, dlen, tlen)) {
 		goto end;
+	}
+
+	if (ehdr_get_wrapcnt(hdr, wrapcnt) != 0)
+	{
+		wrapcnt = NULL;
 	}
 
 	ent->key_start = ehdr_datapos(hdr);
@@ -648,6 +653,8 @@ static int walk_in_block(struct kvs_ent *ent, const struct read_cb *rdkey,
 	const uint32_t bsz = kvs->cfg->bsz;
 	const uint32_t psz = kvs->cfg->psz;
 	uint32_t bend = KVS_ALIGNDOWN(ent->next, bsz) + bsz;
+	uint32_t wrapcnt;
+	uint32_t *wrapcntptr = &wrapcnt;
 	int rc = 0;
 
 	if (bend == kvs->data->bend) {
@@ -656,8 +663,15 @@ static int walk_in_block(struct kvs_ent *ent, const struct read_cb *rdkey,
 
 	while (ent->next < bend) {
 		ent->start = ent->next;
-		if (entry_get_info(ent) != 0) {
+		if (entry_get_info(ent, wrapcntptr) != 0) {
 			ent->next = ent->start + psz;
+			continue;
+		}
+
+		/* avoid reading info from bad blocks */
+		if ((wrapcntptr != NULL) &&
+		    ((wrapcnt + 1U) < kvs->data->wrapcnt)) {
+			ent->next = bend;
 			continue;
 		}
 
@@ -1033,6 +1047,7 @@ int kvs_mount(struct kvs *kvs)
 	const uint32_t bcnt = kvs->cfg->bcnt;
 	const uint32_t bsz = kvs->cfg->bsz;
 	uint32_t wrapcnt;
+	uint32_t *wrapcntptr = &wrapcnt;
 	struct kvs_data *data = kvs->data;
 	struct kvs_ent wlk;
 	bool last_blck_fnd = false;
@@ -1043,18 +1058,8 @@ int kvs_mount(struct kvs *kvs)
 	entry_link(&wlk, kvs);
 	for (int i = 0; i < bcnt; i++) {
 		wlk.start = i * bsz;
-		if (entry_get_info(&wlk) != 0) {
+		if (entry_get_info(&wlk, wrapcntptr) != 0) {
 			continue;
-		}
-
-		uint8_t hdr[KVS_HDR_BUFSIZE];
-
-		if (entry_read(&wlk, 0, hdr, sizeof(hdr)) != 0) {
-			continue;
-		}
-
-		if (ehdr_get_wrapcnt(hdr, &wrapcnt) != 0) {
-		 	continue;
 		}
 
 		if (last_blck_fnd && (wrapcnt < data->wrapcnt)) {
@@ -1072,7 +1077,7 @@ int kvs_mount(struct kvs *kvs)
 	data->pos = data->bend;
 	while (wlk.next < data->bend) {
 		wlk.start = wlk.next;
-		if (entry_get_info(&wlk) == 0) {
+		if (entry_get_info(&wlk, wrapcntptr) == 0) {
 			npos = wlk.next;
 		} else {
 			wlk.next = wlk.start + kvs->cfg->psz;
