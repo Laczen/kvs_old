@@ -92,11 +92,20 @@ ZTEST(kvs_tests, b_kvs_rw)
 	zassert_false(rd_cnt != cnt, "wrong read value");
 
 	cnt++;
-	rc = kvs_write(kvs, "/cnt", &cnt, sizeof(cnt));
+	rc = kvs_write(kvs, "/cnt1", &cnt, sizeof(cnt));
 	zassert_false(rc != 0, "write failed [%d]", rc);
 
 	rd_cnt = cnt + 1U;
-	rc = kvs_read(kvs, "/cnt", &rd_cnt, sizeof(rd_cnt));
+	rc = kvs_read(kvs, "/cnt1", &rd_cnt, sizeof(rd_cnt));
+	zassert_false(rc != 0, "read failed [%d]", rc);
+	zassert_false(rd_cnt != cnt, "wrong read value");
+
+	cnt++;
+	rc = kvs_write(kvs, "/cn", &cnt, sizeof(cnt));
+	zassert_false(rc != 0, "write failed [%d]", rc);
+
+	rd_cnt = cnt + 1U;
+	rc = kvs_read(kvs, "/cn", &rd_cnt, sizeof(rd_cnt));
 	zassert_false(rc != 0, "read failed [%d]", rc);
 	zassert_false(rd_cnt != cnt, "wrong read value");
 
@@ -194,6 +203,7 @@ ZTEST(kvs_tests, d_kvs_walk)
 ZTEST(kvs_tests, e_kvs_compact)
 {
 	struct kvs *kvs = GET_KVS(test);
+	uint32_t rd_cnt;
 	int rc;
 
 	(void)kvs_unmount(kvs);
@@ -202,6 +212,19 @@ ZTEST(kvs_tests, e_kvs_compact)
 
 	rc = kvs_compact(kvs);
 	zassert_false(rc != 0, "compact failed [%d]", rc);
+
+	rc = kvs_read(kvs, "/cnt", &rd_cnt, sizeof(rd_cnt));
+	zassert_false(rc != 0, "read failed [%d]", rc);
+
+	rc = kvs_read(kvs, "/cnt1", &rd_cnt, sizeof(rd_cnt));
+	zassert_false(rc != 0, "read failed [%d]", rc);
+
+	rc = kvs_read(kvs, "/cn", &rd_cnt, sizeof(rd_cnt));
+	zassert_false(rc != 0, "read failed [%d]", rc);
+
+	rc = kvs_read(kvs, "/wlk_tst", &rd_cnt, sizeof(rd_cnt));
+	zassert_false(rc != 0, "read failed [%d]", rc);
+
 }
 
 ZTEST(kvs_tests, f_kvs_gc)
@@ -244,6 +267,18 @@ ZTEST(kvs_tests, f_kvs_gc)
 
 	rc = kvs_read(kvs, "/cnt", &cnt, sizeof(cnt));
 	zassert_false(rc == 0, "read succeeded on deleted item");
+
+	rc = kvs_read(kvs, "/cnt_", &cnt, sizeof(cnt));
+	zassert_false(rc != 0, "read failed [%d]", rc);
+
+	rc = kvs_read(kvs, "/cnt1", &cnt, sizeof(cnt));
+	zassert_false(rc != 0, "read failed [%d]", rc);
+
+	rc = kvs_read(kvs, "/cn", &cnt, sizeof(cnt));
+	zassert_false(rc != 0, "read failed [%d]", rc);
+
+	rc = kvs_read(kvs, "/wlk_tst", &cnt, sizeof(cnt));
+	zassert_false(rc != 0, "read failed [%d]", rc);
 
 	rc = kvs_unmount(kvs);
 	zassert_true(rc == 0, "unmount failed [%d]", rc);

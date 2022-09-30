@@ -59,7 +59,6 @@ extern "C" {
 #define KVS_MAX(a, b)		  (a < b ? b : a)
 #define KVS_ALIGNUP(num, align)	  (((num) + ((align) - 1)) & ~((align) - 1))
 #define KVS_ALIGNDOWN(num, align) ((num) & ~((align) - 1))
-#define KVS_ASSERT(a)
 
 /**
  * @brief KVS interface definition
@@ -94,6 +93,15 @@ enum kvs_error_codes
 	KVS_EINVAL = 22,  /**< Invalid argument */
 	KVS_ENOSPC = 28,  /**< No space left on device */
 	KVS_EDEADLK = 45, /**< Resource deadlock avoided */
+};
+
+/**
+ * @brief KVS stop codes
+ *
+ */
+enum kvs_stop_codes
+{
+	KVS_DONE = 1,	  /**< Finished processing */
 };
 
 /**
@@ -219,7 +227,6 @@ struct kvs_cfg {
  */
 struct kvs_data {
 	bool ready;
-	bool gc_disabled; /**< garbage collection is disabled */
 	uint32_t pos;	  /**< current memory (write) position */
 	uint32_t bend;	  /**< current memory (write) block end */
 	uint32_t wrapcnt; /**< current wrap/erase counter */
