@@ -46,4 +46,4 @@ KVS stores Key-value entries as:
 
  ## documentation
 
- The API for KVS is documented in the header file [kvs.h](./lib/include/kvs.h).
+ The API for KVS is documented in the header file [kvs.h](./lib/include/kvs/kvs.h).
