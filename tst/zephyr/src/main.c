@@ -144,7 +144,7 @@ ZTEST(kvs_tests, c_kvs_remount)
 	zassert_true(rc == 0, "unmount failed [%d]", rc);
 }
 
-int kvs_walk_test_cb(const struct kvs_ent *ent, void *cb_arg)
+int kvs_walk_test_cb(struct kvs_ent *ent, void *cb_arg)
 {
 	uint32_t *cnt = (uint32_t *)cb_arg;
 
@@ -152,7 +152,7 @@ int kvs_walk_test_cb(const struct kvs_ent *ent, void *cb_arg)
 	return 0;
 }
 
-int kvs_walk_unique_test_cb(const struct kvs_ent *ent, void *cb_arg)
+int kvs_walk_unique_test_cb(struct kvs_ent *ent, void *cb_arg)
 {
 	uint32_t *value = (uint32_t *)cb_arg;
 

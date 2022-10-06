@@ -375,7 +375,8 @@ int kvs_delete(const struct kvs *kvs, const char *key);
 
 /**
  * @brief walk over entries in kvs and issue a cb for each entry that starts
- *        with the specified key
+ *        with the specified key. Walking can be stopped by returning KVS_DONE
+ *	  from the callback.
  *
  * @param[in] kvs pointer to the kvs
  * @param[in] key
@@ -385,12 +386,12 @@ int kvs_delete(const struct kvs *kvs, const char *key);
  * @return 0 on success, negative errorcode on error
  */
 int kvs_walk(const struct kvs *kvs, const char *key,
-	     int (*cb)(const struct kvs_ent *ent, void *arg), void *arg);
+	     int (*cb)(struct kvs_ent *ent, void *arg), void *arg);
 
 /**
  * @brief walk over entries in kvs and issue a cb for each entry that starts
  *        with the specified key, the cb is only called for the last added
- *	  entry.
+ *	  entry. Walking can be stopped by returning KVS_DONE from the callback.
  *
  * @param[in] kvs pointer to the kvs
  * @param[in] key
@@ -400,7 +401,7 @@ int kvs_walk(const struct kvs *kvs, const char *key,
  * @return 0 on success, negative errorcode on error
  */
 int kvs_walk_unique(const struct kvs *kvs, const char *key,
-		    int (*cb)(const struct kvs_ent *ent, void *arg), void *arg);
+		    int (*cb)(struct kvs_ent *ent, void *arg), void *arg);
 
 #ifdef __cplusplus
 } /* extern "C" */
