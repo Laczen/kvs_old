@@ -10,8 +10,6 @@
 
 #include <string.h>
 
-#include <zephyr/sys/printk.h>
-
 static int kvs_dev_init(const struct kvs *kvs)
 {
 	const struct kvs_cfg *cfg = kvs->cfg;

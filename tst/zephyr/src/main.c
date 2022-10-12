@@ -1,6 +1,5 @@
 #include "kvs/kvs.h"
 #include "zephyr/sys/printk.h"
-#include "zephyr/zephyr.h"
 #include "zephyr/ztest.h"
 
 #include <stdarg.h>
@@ -181,6 +180,13 @@ ZTEST(kvs_tests, d_kvs_walk)
 	zassert_false(rc != 0, "walk failed [%d]", rc);
 	zassert_false(en_cnt != 1U, "wrong walk result value");
 
+	/* walk again searching for "/wlk" and count appearances, this should be
+	 * one again.
+	 */
+	en_cnt = 0U;
+	rc = kvs_walk(kvs, "/wlk", kvs_walk_test_cb, (void *)&en_cnt);
+	zassert_false(rc != 0, "walk failed [%d]", rc);
+	zassert_false(en_cnt != 1U, "wrong walk result value");
 	/*
 	 * write another entry "/wlk_tst", walk searching for "/wlk_tst" and
 	 * count appearances, this should now be two
