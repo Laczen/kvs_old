@@ -3,6 +3,9 @@
 
   SPDX-License-Identifier: Apache-2.0
 -->
+# REMARK: This is an old version of KVS, I am going to change the entries
+# storage method to reduce size and simplify the library
+
 # KVS - key value store for embedded devices
 
 Generic key value store interface to store and retrieve key-value entries on

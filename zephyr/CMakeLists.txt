@@ -16,7 +16,12 @@ if(CONFIG_KVS)
 zephyr_include_directories(
     ${KVS_DIR}/include
 )
+zephyr_include_directories(
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
 zephyr_library_sources(
     ${KVS_DIR}/src/kvs.c
 )
+add_subdirectory(subsys)
+
 endif()

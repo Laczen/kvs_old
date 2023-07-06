@@ -1,0 +1,13 @@
+/*
+ * Copyright (c) 2023 Laczen
+ * SPDX-License-Identifier: Apache-2.0
+ */
+ 
+ / {
+        kvs_storage: kvs_storage {
+                compatible = "zephyr,kvs-flash";
+                partition = <&storage_partition>;
+                sector-size = <512>;
+                free-size = <4096>;
+        };
+ };

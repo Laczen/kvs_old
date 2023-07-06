@@ -1,0 +1,32 @@
+# Subsystem configuration options
+
+# Copyright (c) 2023 Laczen
+# SPDX-License-Identifier: Apache-2.0
+
+config KVS_BACKEND_FLASH
+        bool "Enable KVS FLASH backend"
+        depends on FLASH
+        depends on FLASH_PAGE_LAYOUT
+        help
+          This enables the FLASH backend for key value storage (this can also
+          be RAM by utilizing flash_simulator).
+
+if KVS_BACKEND_FLASH
+module = KVS_BACKEND_FLASH
+module-str = kvs_backend_flash
+source "subsys/logging/Kconfig.template.log_config"
+
+endif #KVS_BACKEND_FLASH
+
+config KVS_BACKEND_EEPROM
+        bool "Enable KVS EEPROM backend"
+        depends on EEPROM
+        help
+          This enables the EEPROM backend for key value storage
+
+if KVS_BACKEND_EEPROM
+module = KVS_BACKEND_EEPROM
+module-str = kvs_backend_eeprom
+source "subsys/logging/Kconfig.template.log_config"
+
+endif #KVS_BACKEND_EEPROM

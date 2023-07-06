@@ -126,12 +126,12 @@ struct kvs_ent {
  */
 
 struct kvs_cfg {
-	const uint32_t bsz; 	/**< block or sector size (byte), power of 2! */
-	const uint32_t bcnt;    /**< block count (including spare blocks) */
-	const uint32_t bspr;    /**< spare block count */
+	const uint32_t bsz;	/**< block or sector size (byte), power of 2! */
+	const uint32_t bcnt;	/**< block count (including spare blocks) */
+	const uint32_t bspr;	/**< spare block count */
 
-	void *ctx;	        /**< opaque context pointer */
-	void *pbuf;	        /**< pointer to prog buffer */
+	const void *ctx;	/**< opaque context pointer */
+	const void *pbuf;	/**< pointer to prog buffer */
 	const uint32_t psz;  	/**< prog buffer size (byte), power of 2! */
 
 	/**
@@ -144,13 +144,14 @@ struct kvs_cfg {
 	 *
 	 * @return 0 on success, -KVS_EIO on error.
 	 */
-	int (*read)(void *ctx, uint32_t off, void *data, uint32_t len);
+	int (*read)(const void *ctx, uint32_t off, void *data, uint32_t len);
 
 	/**
 	 * @brief program memory device
 	 *
-	 * When writing to the first byte of a block this function should erase
-	 * the blocks or set all bytes to 0xff/0x00 (on eeprom or ram).
+	 * REMARK: When writing to a memory device that needs to be erased
+	 * before write, the first write to a erase block should wipe (erase)
+	 * the block.
 	 *
 	 * @param[in] ctx pointer to memory context
 	 * @param[in] off starting address
@@ -159,7 +160,8 @@ struct kvs_cfg {
 	 *
 	 * @return 0 on success, -KVS_EIO on error
 	 */
-	int (*prog)(void *ctx, uint32_t off, const void *data, uint32_t len);
+	int (*prog)(const void *ctx, uint32_t off, const void *data,
+		    uint32_t len);
 
 	/**
 	 * @brief compare data to memory device content (optional)
@@ -171,7 +173,8 @@ struct kvs_cfg {
 	 *
 	 * @return 0 on success, -KVS_EIO on error
 	 */
-	int (*comp)(void *ctx, uint32_t off, const void *data, uint32_t len);
+	int (*comp)(const void *ctx, uint32_t off, const void *data,
+		    uint32_t len);
 
 	/**
 	 * @brief memory device sync
@@ -182,7 +185,7 @@ struct kvs_cfg {
 	 *
 	 * @return 0 on success, error is propagated to user
 	 */
-	int (*sync)(void *ctx, uint32_t off);
+	int (*sync)(const void *ctx, uint32_t off);
 
 	/**
 	 * @brief memory device init function
@@ -191,7 +194,7 @@ struct kvs_cfg {
 	 *
 	 * @return 0 on success, error is propagated to user
 	 */
-	int (*init)(void *ctx);
+	int (*init)(const void *ctx);
 
 	/**
 	 * @brief memory device release function
@@ -200,7 +203,7 @@ struct kvs_cfg {
 	 *
 	 * @return 0 on success, error is propagated to user
 	 */
-	int (*release)(void *ctx);
+	int (*release)(const void *ctx);
 
 	/**
 	 * @brief os provided lock function
@@ -209,7 +212,7 @@ struct kvs_cfg {
 	 *
 	 * @return 0 on success, error is propagated to user
 	 */
-	int (*lock)(void *ctx);
+	int (*lock)(const void *ctx);
 
 	/**
 	 * @brief os provided unlock function
@@ -218,7 +221,7 @@ struct kvs_cfg {
 	 *
 	 * @return 0 on success, error is ignored
 	 */
-	int (*unlock)(void *ctx);
+	int (*unlock)(const void *ctx);
 };
 
 /**
@@ -247,7 +250,7 @@ struct kvs {
  */
 #define DEFINE_KVS(_name, _bsz, _bcnt, _bspr, _ctx, _pbuf, _psz, _read, _prog, \
 		   _comp, _sync, _init, _release, _lock, _unlock)	       \
-	struct kvs_cfg _name##_kvs_cfg = {                                     \
+	struct kvs_cfg _name##_cfg = {                                         \
 		.bsz = _bsz,		                                       \
 		.bcnt = _bcnt,                                                 \
 		.bspr = _bspr,                                                 \
@@ -263,17 +266,17 @@ struct kvs {
 		.lock = _lock,                                                 \
 		.unlock = _unlock,                                             \
 	};                                                                     \
-	struct kvs_data _name##_kvs_data;                                      \
-	struct kvs _name##_kvs = {                                             \
-		.cfg = &_name##_kvs_cfg,                                       \
-		.data = &_name##_kvs_data,                                     \
+	struct kvs_data _name##_data;                                          \
+	struct kvs _name = {                                                   \
+		.cfg = &_name##_cfg,                                           \
+		.data = &_name##_data,                                         \
 	}
 
 /**
  * @brief Helper macro to get a pointer to a KVS structure
  *
  */
-#define GET_KVS(_name) &_name##_kvs
+#define GET_KVS(_name) &_name
 
 /**
  * @brief mount the key value store
@@ -408,4 +411,3 @@ int kvs_walk_unique(const struct kvs *kvs, const char *key,
 #endif
 
 #endif /* KVS_H_ */
-       /** @} */

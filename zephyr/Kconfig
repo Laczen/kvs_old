@@ -16,4 +16,6 @@ module = KVS
 module-str = kvs
 source "subsys/logging/Kconfig.template.log_config"
 
-endif # SFCB
+rsource "subsys/kvs/Kconfig"
+
+endif # KVS

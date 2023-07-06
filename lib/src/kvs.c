@@ -6,9 +6,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "kvs/kvs.h"
-
 #include <string.h>
+#include "kvs/kvs.h"
 
 static int kvs_dev_init(const struct kvs *kvs)
 {
@@ -659,32 +658,30 @@ static int walk_in_block(struct kvs_ent *ent, const struct read_cb *rdkey,
 			 const struct entry_cb *cb)
 {
 	const struct kvs *kvs = ent->kvs;
-	const uint32_t bsz = kvs->cfg->bsz;
-	const uint32_t psz = kvs->cfg->psz;
-	uint32_t bend = KVS_ALIGNDOWN(ent->next, bsz) + bsz;
-	uint32_t wrapcnt;
+	const struct kvs_cfg *cfg = kvs->cfg;
+	const uint32_t bsz = cfg->bsz;
+	const struct kvs_data *data = kvs->data;
+	uint32_t bend, wrapcnt;
 	int rc = 0;
 
-	if ((bend == kvs->data->bend) && (kvs->data->ready)) {
-		bend = kvs->data->pos;
+	ent->next = (ent->next < (bsz * cfg->bcnt)) ? ent->next : 0U;
+	bend = KVS_ALIGNDOWN(ent->next, bsz) + bsz;
+	if ((bend == data->bend) && (data->ready)) {
+		bend = data->pos;
 	}
 
 	while (ent->next < bend) {
 		ent->start = ent->next;
 		if (entry_get_info(ent) != 0) {
-			ent->next = ent->start + psz;
+			ent->next = bend;
 			continue;
 		}
 
 		if (entry_has_wrapcnt(ent, &wrapcnt)) {
-			if (wrapcnt > kvs->data->wrapcnt) {
-				kvs->data->wrapcnt = wrapcnt;
-			}
-
 			/* avoid reading info from bad blocks */
 			if ((wrapcnt + 1U) < kvs->data->wrapcnt) {
 				ent->next = bend;
-				goto end;
+				continue;
 			}
 
 		}
@@ -710,55 +707,47 @@ end:
 	return rc;
 }
 
-static int walk(const struct kvs *kvs, const struct read_cb *rdkey,
-		const struct entry_cb *cb, uint32_t bcnt)
+static int fwalk(struct kvs_ent *ent, const struct read_cb *rdkey,
+		 const struct entry_cb *cb, uint32_t bcnt)
 {
-	const uint32_t bsz = kvs->cfg->bsz;
-	const uint32_t end = kvs->cfg->bcnt * bsz;
-	const uint32_t bend = kvs->data->bend;
-	struct kvs_ent wlk;
-	int rc = 0;
+	const struct kvs *kvs = ent->kvs;
+	const struct kvs_cfg *cfg = kvs->cfg;
+	const uint32_t bsz = cfg->bsz;
+	int rc = -KVS_ENOENT;
 
-	entry_link(&wlk, kvs);
-	wlk.next = bend;
-	for (int i = 0; i < bcnt; i++) {
-		wlk.next = (wlk.next < end) ? wlk.next : 0U;
-		wlk.start = wlk.next;
-		rc = walk_in_block(&wlk, rdkey, cb);
+	while (bcnt != 0U) {
+		rc = walk_in_block(ent, rdkey, cb);
 		if (rc) {
-			goto end;
+			break;
 		}
 
-		wlk.next = KVS_ALIGNDOWN(wlk.start, bsz) + bsz;
+		ent->next = KVS_ALIGNDOWN(ent->start, bsz) + bsz;
+		bcnt--;
 	}
-end:
-	rc = (rc == KVS_DONE) ? 0 : rc;
+
 	return rc;
 }
 
-static int rwalk(const struct kvs *kvs, const struct read_cb *rdkey,
+static int rwalk(struct kvs_ent *ent, const struct read_cb *rdkey,
 		 const struct entry_cb *cb, uint32_t bcnt)
 {
+	const struct kvs *kvs = ent->kvs;
 	const uint32_t bsz = kvs->cfg->bsz;
 	const uint32_t end = kvs->cfg->bcnt * bsz;
-	struct kvs_ent wlk;
-	int rc = 0;
+	int rc = -KVS_ENOENT;
 
-	entry_link(&wlk, kvs);
-	wlk.next = KVS_ALIGNDOWN(kvs->data->pos, bsz);
-	for (int i = 0; i < bcnt; i++) {
-		wlk.start = wlk.next;
-		rc = walk_in_block(&wlk, rdkey, cb);
+	while (bcnt != 0U) {
+		rc = walk_in_block(ent, rdkey, cb);
 		if (rc) {
-			goto end;
+			break;
 		}
 
-		wlk.next = KVS_ALIGNDOWN(wlk.start, bsz);
-		wlk.next = (wlk.next == 0U) ? end : wlk.next;
-		wlk.next -= bsz;
+		ent->next = KVS_ALIGNDOWN(ent->start, bsz);
+		ent->next = (ent->next == 0U) ? end : ent->next;
+		ent->next -= bsz;
+		bcnt--;
 	}
-end:
-	rc = (rc == KVS_DONE) ? 0 : rc;
+
 	return rc;
 }
 
@@ -791,8 +780,10 @@ static int entry_get_cb(struct kvs_ent *ent, void *cb_arg)
 static int entry_get(struct kvs_ent *ent, const struct kvs *kvs,
 		     const struct read_cb *rdkey)
 {
-	const uint32_t bcnt = kvs->cfg->bcnt;
-	struct kvs_ent wlk;
+	struct kvs_ent wlk = {
+		.kvs = (struct kvs *)kvs,
+		.next = KVS_ALIGNDOWN(kvs->data->pos, kvs->cfg->bsz),
+	};
 	struct entry_get_cb_arg cb_arg = {
 		.ent = ent,
 		.klen = rdkey->len,
@@ -802,20 +793,38 @@ static int entry_get(struct kvs_ent *ent, const struct kvs *kvs,
 		.cb = entry_get_cb,
 		.cb_arg = (void *)&cb_arg,
 	};
+	int rc;
 
 	entry_link(ent, kvs);
-	entry_link(&wlk, kvs);
-	if (rwalk(kvs, rdkey, &cb, bcnt) != 0) {
-		goto end;
-	}
-
-	if (!cb_arg.found) {
-		goto end;
+	rc = rwalk(&wlk, rdkey, &cb, kvs->cfg->bcnt - kvs->cfg->bspr);
+	
+	if ((!cb_arg.found) || (ent->val_start == ent->fil_start)) {
+		return -KVS_ENOENT;
 	}
 
 	return 0;
-end:
-	return -KVS_ENOENT;
+}
+
+struct entry_dup_cb_arg {
+	uint32_t klen;
+	uint32_t stop;
+	bool duplicate;
+};
+
+static int entry_dup_cb(struct kvs_ent *ent, void *cb_arg)
+{
+	struct entry_dup_cb_arg *dup = (struct entry_dup_cb_arg *)cb_arg;
+
+	if (ent->next == dup->stop) {
+		return KVS_DONE;
+	}
+
+	if ((ent->val_start - ent->key_start) == dup->klen) {
+		dup->duplicate = true;
+		return KVS_DONE;
+	}
+
+	return 0;
 }
 
 static int unique_cb(struct kvs_ent *ent, void *cb_arg)
@@ -828,17 +837,30 @@ static int unique_cb(struct kvs_ent *ent, void *cb_arg)
 		.len = ent->val_start - ent->key_start,
 		.read = read_cb_entry,
 	};
-	struct kvs_ent wlk;
+	struct entry_dup_cb_arg dup_cb_arg = {
+		.klen = ent->val_start - ent->key_start,
+		.duplicate = false,
+		.stop = kvs->data->pos,
+	};
+	const struct entry_cb dup_entry_cb = {
+		.cb = entry_dup_cb,
+		.cb_arg = (void *)&dup_cb_arg,
+	};
+	struct kvs_ent wlk = {
+		.kvs = (struct kvs *)kvs,
+		.next = ent->next,
+	};
 
-	(void)entry_get(&wlk, kvs, &readkey);
-	if ((ent->start == wlk.start) && (ent->fil_start != ent->val_start)) {
+	(void)fwalk(&wlk, &readkey, &dup_entry_cb, kvs->cfg->bcnt);
+		
+	if (!dup_cb_arg.duplicate) {
 		return cb->cb(ent, cb->cb_arg);
 	}
 
 	return 0;
 }
 
-static int walk_unique(const struct kvs *kvs, const struct read_cb *rdkey,
+static int walk_unique(struct kvs_ent *ent, const struct read_cb *rdkey,
 		       const struct entry_cb *cb, uint32_t bcnt)
 {
 	const struct entry_cb walk_cb = {
@@ -846,12 +868,16 @@ static int walk_unique(const struct kvs *kvs, const struct read_cb *rdkey,
 		.cb_arg = (void *)cb,
 	};
 
-	return walk(kvs, rdkey, &walk_cb, bcnt);
+	return fwalk(ent, rdkey, &walk_cb, bcnt);
 }
 
 int copy_cb(struct kvs_ent *ent, void *cb_arg)
 {
 	int rc = 0;
+
+	if (ent->val_start == ent->fil_start) {
+		return 0;
+	}
 
 	for (int i = 0; i < ent->kvs->cfg->bspr; i++) {
 	 	rc = entry_copy(ent);
@@ -882,7 +908,12 @@ static int compact(const struct kvs *kvs, uint32_t bcnt)
 		wblock_advance(kvs);
 	}
 
-	return walk_unique(kvs, &rdkey, &compact_cb, bcnt);
+	struct kvs_ent wlk = {
+		.kvs = (struct kvs *)kvs,
+		.next = data->bend,
+	};
+
+	return walk_unique(&wlk, &rdkey, &compact_cb, bcnt);
 }
 
 int kvs_entry_read(const struct kvs_ent *ent, uint32_t off, void *data,
@@ -929,10 +960,6 @@ int kvs_read(const struct kvs *kvs, const char *key, void *value, uint32_t len)
 		return rc;
 	}
 
-	if (wlk.fil_start == wlk.val_start) {
-		return -KVS_ENOENT;
-	}
-
 	return entry_read(&wlk, wlk.val_start, value, len);
 }
 
@@ -965,8 +992,7 @@ int kvs_write(const struct kvs *kvs, const char *key, const void *value,
 
 	};
 
-	const uint32_t bcnt = kvs->cfg->bcnt;
-	uint32_t cnt = bcnt - kvs->cfg->bspr;
+	uint32_t cnt = kvs->cfg->bcnt;
 	int rc;
 
 	rc = kvs_dev_lock(kvs);
@@ -980,7 +1006,7 @@ int kvs_write(const struct kvs *kvs, const char *key, const void *value,
 			goto end;
 		}
 
-		rc = compact(kvs, bcnt - cnt);
+		rc = compact(kvs, kvs->cfg->bspr);
 		cnt--;
 	}
 
@@ -1012,8 +1038,12 @@ int kvs_walk_unique(const struct kvs *kvs, const char *key,
 		.cb = cb,
 		.cb_arg = cb_arg,
 	};
+	struct kvs_ent wlk = {
+		.kvs = (struct kvs *)kvs,
+		.next = kvs->data->bend,
+	};
 
-	return walk_unique(kvs, &rdkey, &unique_cb, kvs->cfg->bcnt);
+	return walk_unique(&wlk, &rdkey, &unique_cb, kvs->cfg->bcnt);
 }
 
 int kvs_walk(const struct kvs *kvs, const char *key,
@@ -1033,14 +1063,28 @@ int kvs_walk(const struct kvs *kvs, const char *key,
 		.cb = cb,
 		.cb_arg = cb_arg,
 	};
+	struct kvs_ent wlk = {
+		.kvs = (struct kvs *)kvs,
+		.next = kvs->data->bend,
+	};
 
-	return walk(kvs, &rdkey, &entry_cb, kvs->cfg->bcnt);
+	return fwalk(&wlk, &rdkey, &entry_cb, kvs->cfg->bcnt);
 }
 
 static int last_block_mount_cb(struct kvs_ent *ent, void *cb_arg)
 {
-	const uint32_t bsz = ent->kvs->cfg->bsz;
-	const uint32_t bend = KVS_ALIGNDOWN(ent->start, bsz) + bsz;
+	const struct kvs *kvs = ent->kvs;
+	const struct kvs_cfg *cfg = kvs->cfg;
+	const uint32_t bend = KVS_ALIGNDOWN(ent->start, cfg->bsz) + cfg->bsz;
+	struct kvs_data *data = kvs->data;
+	uint32_t wrapcnt;
+
+	if ((entry_has_wrapcnt(ent, &wrapcnt)) &&
+	    (wrapcnt >= data->wrapcnt)) {
+		data->pos = ent->start;
+		data->wrapcnt = wrapcnt;
+		data->bend = bend;
+	}
 
 	ent->next = bend;
 	return 0;
@@ -1109,16 +1153,23 @@ int kvs_mount(struct kvs *kvs)
 		.off = 0U,
 		.read = read_cb_ptr,
 	};
-
+	
 	kvs->data->pos = 0U;
 	kvs->data->bend = kvs->cfg->bsz;
 	kvs->data->wrapcnt = 0U;
-	rc = walk(kvs, &rdkey, &last_block_cb, kvs->cfg->bcnt);
+
+	struct kvs_ent wlk = {
+		.kvs = kvs,
+		.next = kvs->data->pos,
+	};
+
+	rc = fwalk(&wlk, &rdkey, &last_block_cb, kvs->cfg->bcnt);
 	if (rc != 0) {
 		goto end;
 	}
 
-	rc = rwalk(kvs, &rdkey, &last_entry_cb, 1U);
+	wlk.next = kvs->data->pos;
+	rc = fwalk(&wlk, &rdkey, &last_entry_cb, 1U);
 	if (rc != 0) {
 		goto end;
 	}
@@ -1135,6 +1186,11 @@ int kvs_unmount(struct kvs *kvs)
 	}
 
 	int rc;
+	
+	rc = kvs_dev_init(kvs);
+	if (rc != 0) {
+		return rc;
+	}
 
 	rc = kvs_dev_lock(kvs);
 	if (rc != 0) {
@@ -1170,13 +1226,20 @@ int kvs_erase(struct kvs *kvs)
 		return rc;
 	}
 
+	uint8_t buf[kvs->cfg->psz];
+
+	memset(buf, fillchar, sizeof(buf));
 	while (off < (kvs->cfg->bsz * kvs->cfg->bcnt)) {
-		(void)kvs_dev_prog(kvs, off, &fillchar, 1);
-		off++;
+		rc = kvs_dev_prog(kvs, off, buf, sizeof(buf));
+		if (rc != 0) {
+			break;
+		}
+		off += sizeof(buf);
 	}
 
 	(void)kvs_dev_unlock(kvs);
-	return kvs_dev_release(kvs);
+	(void)kvs_dev_release(kvs);
+	return rc;
 }
 
 int kvs_compact(const struct kvs *kvs)
@@ -1192,7 +1255,7 @@ int kvs_compact(const struct kvs *kvs)
 		return rc;
 	}
 
-	rc = compact(kvs, kvs->cfg->bcnt - kvs->cfg->bspr);
+	rc = compact(kvs, kvs->cfg->bcnt);
 	(void)kvs_dev_unlock(kvs);
 	return rc;
 }

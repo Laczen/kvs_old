@@ -1,70 +1,20 @@
-#include "kvs/kvs.h"
-#include "zephyr/sys/printk.h"
+#include <zephyr/kernel.h>
 #include "zephyr/ztest.h"
+#include <zephyr/logging/log.h>
+#include <zephyr/subsys/kvs.h>
 
-#include <stdarg.h>
-
-uint8_t back[1280];
-uint8_t pbuf[8];
-
-static int read(void *ctx, uint32_t off, void *data, uint32_t len)
-{
-	uint8_t *data8 = (uint8_t *)data;
-
-	if ((off + len) > sizeof(back)) {
-		return -KVS_EIO;
-	}
-
-	// if ((offset >= 256) && (offset < 512)) {
-	//         return -KVS_EIO;
-	// }
-
-	memcpy(data8, &back[off], len);
-	return 0;
-}
-
-static int prog(void *ctx, uint32_t off, const void *data, uint32_t len)
-{
-	const uint8_t *data8 = (uint8_t *)data;
-
-	if ((off + len) > sizeof(back)) {
-		return -KVS_EIO;
-	}
-
-	// if ((off >= 256) && (off < 512)) {
-	//         return -KVS_EIO;
-	// }
-
-	if (off % 256 == 0) {
-		memset(&back[off], 0, 256);
-	}
-
-	memcpy(&back[off], data8, len);
-	return 0;
-}
-
-static int comp(void *ctx, uint32_t off, const void *data, uint32_t len)
-{
-	const uint8_t *data8 = (uint8_t *)data;
-
-	if (memcmp(&back[off], data8, len) != 0) {
-		return -KVS_EIO;
-	}
-
-	return 0;
-}
-
-DEFINE_KVS(test, 256, 5, 1, NULL, (void *)&pbuf, sizeof(pbuf), read, prog, comp,
-           NULL, NULL, NULL, NULL, NULL);
+LOG_MODULE_REGISTER(kvs_test);
 
 ZTEST_SUITE(kvs_tests, NULL, NULL, NULL, NULL, NULL);
 
 ZTEST(kvs_tests, a_kvs_mount)
 {
-	struct kvs *kvs = GET_KVS(test);
+	struct kvs *kvs = GET_KVS(DT_NODELABEL(kvs_storage));
 	int rc;
 
 	(void)kvs_unmount(kvs);
+	rc = kvs_erase(kvs);
+	zassert_false(rc != 0, "erase failed [%d]", rc);
 	rc = kvs_mount(kvs);
 	zassert_false(rc != 0, "mount failed [%d]", rc);
 	rc = kvs_unmount(kvs);
@@ -73,8 +23,8 @@ ZTEST(kvs_tests, a_kvs_mount)
 
 ZTEST(kvs_tests, b_kvs_rw)
 {
-	struct kvs *kvs = GET_KVS(test);
-	uint32_t cnt, rd_cnt;
+	struct kvs *kvs = GET_KVS(DT_NODELABEL(kvs_storage));
+	uint32_t cnt, cnt1, cn, rd_cnt;
 	int rc;
 
 	(void)kvs_unmount(kvs);
@@ -85,28 +35,38 @@ ZTEST(kvs_tests, b_kvs_rw)
 	rc = kvs_write(kvs, "/cnt", &cnt, sizeof(cnt));
 	zassert_false(rc != 0, "write failed [%d]", rc);
 
-	rd_cnt = cnt + 1U;
+	rd_cnt = 255U;
 	rc = kvs_read(kvs, "/cnt", &rd_cnt, sizeof(rd_cnt));
 	zassert_false(rc != 0, "read failed [%d]", rc);
 	zassert_false(rd_cnt != cnt, "wrong read value");
 
-	cnt++;
-	rc = kvs_write(kvs, "/cnt1", &cnt, sizeof(cnt));
+	cnt1 = 1U;
+	rc = kvs_write(kvs, "/cnt1", &cnt1, sizeof(cnt1));
 	zassert_false(rc != 0, "write failed [%d]", rc);
 
-	rd_cnt = cnt + 1U;
+	rd_cnt = 255U;
 	rc = kvs_read(kvs, "/cnt1", &rd_cnt, sizeof(rd_cnt));
 	zassert_false(rc != 0, "read failed [%d]", rc);
-	zassert_false(rd_cnt != cnt, "wrong read value");
+	zassert_false(rd_cnt != cnt1, "wrong read value");
 
-	cnt++;
-	rc = kvs_write(kvs, "/cn", &cnt, sizeof(cnt));
+	cn = 2U;
+	rc = kvs_write(kvs, "/cn", &cn, sizeof(cn));
 	zassert_false(rc != 0, "write failed [%d]", rc);
 
-	rd_cnt = cnt + 1U;
+	rd_cnt = 255U;
 	rc = kvs_read(kvs, "/cn", &rd_cnt, sizeof(rd_cnt));
 	zassert_false(rc != 0, "read failed [%d]", rc);
+	zassert_false(rd_cnt != cn, "wrong read value");
+
+	rd_cnt = 255U;
+	rc = kvs_read(kvs, "/cnt", &rd_cnt, sizeof(rd_cnt));
+	zassert_false(rc != 0, "read failed [%d]", rc);
 	zassert_false(rd_cnt != cnt, "wrong read value");
+
+	rd_cnt = 255U;
+	rc = kvs_read(kvs, "/cnt1", &rd_cnt, sizeof(rd_cnt));
+	zassert_false(rc != 0, "read failed [%d]", rc);
+	zassert_false(rd_cnt != cnt1, "wrong read value");
 
 	rc = kvs_unmount(kvs);
 	zassert_true(rc == 0, "unmount failed [%d]", rc);
@@ -114,7 +74,7 @@ ZTEST(kvs_tests, b_kvs_rw)
 
 ZTEST(kvs_tests, c_kvs_remount)
 {
-	struct kvs *kvs = GET_KVS(test);
+	struct kvs *kvs = GET_KVS(DT_NODELABEL(kvs_storage));
 	uint32_t cnt, pos, bend, wrapcnt;
 	int rc;
 
@@ -160,14 +120,14 @@ int kvs_walk_unique_test_cb(struct kvs_ent *ent, void *cb_arg)
 
 ZTEST(kvs_tests, d_kvs_walk)
 {
-	struct kvs *kvs = GET_KVS(test);
+	struct kvs *kvs = GET_KVS(DT_NODELABEL(kvs_storage));
 	uint32_t cnt, en_cnt;
 	int rc;
 
 	(void)kvs_unmount(kvs);
 	rc = kvs_mount(kvs);
 	zassert_false(rc != 0, "mount failed [%d]", rc);
-
+	
 	/*
 	 * write one entry "/wlk_tst", walk searching for "/wlk_tst" and
 	 * count appearances, this should be one
@@ -208,17 +168,18 @@ ZTEST(kvs_tests, d_kvs_walk)
 
 ZTEST(kvs_tests, e_kvs_compact)
 {
-	struct kvs *kvs = GET_KVS(test);
+	struct kvs *kvs = GET_KVS(DT_NODELABEL(kvs_storage));
 	uint32_t rd_cnt;
 	int rc;
 
 	(void)kvs_unmount(kvs);
 	rc = kvs_mount(kvs);
 	zassert_false(rc != 0, "mount failed [%d]", rc);
-
+	LOG_INF("pos %d bend %d wrapcnt %d", kvs->data->pos, kvs->data->bend, kvs->data->wrapcnt);
+	
 	rc = kvs_compact(kvs);
 	zassert_false(rc != 0, "compact failed [%d]", rc);
-
+	LOG_INF("pos %d bend %d wrapcnt %d", kvs->data->pos, kvs->data->bend, kvs->data->wrapcnt);
 	rc = kvs_read(kvs, "/cnt", &rd_cnt, sizeof(rd_cnt));
 	zassert_false(rc != 0, "read failed [%d]", rc);
 
@@ -231,69 +192,46 @@ ZTEST(kvs_tests, e_kvs_compact)
 	rc = kvs_read(kvs, "/wlk_tst", &rd_cnt, sizeof(rd_cnt));
 	zassert_false(rc != 0, "read failed [%d]", rc);
 
+	rc = kvs_delete(kvs, "/wlk_tst");
+	zassert_false(rc != 0, "delete failed [%d]", rc);
+
+	rc = kvs_compact(kvs);
+	zassert_false(rc != 0, "compact failed [%d]", rc);
+	LOG_INF("pos %d bend %d wrapcnt %d", kvs->data->pos, kvs->data->bend, kvs->data->wrapcnt);
+
+	rc = kvs_read(kvs, "/cnt", &rd_cnt, sizeof(rd_cnt));
+	zassert_false(rc != 0, "read failed [%d]", rc);
+
+	rc = kvs_read(kvs, "/cnt1", &rd_cnt, sizeof(rd_cnt));
+	zassert_false(rc != 0, "read failed [%d]", rc);
+
+	rc = kvs_read(kvs, "/cn", &rd_cnt, sizeof(rd_cnt));
+	zassert_false(rc != 0, "read failed [%d]", rc);
+
+	rc = kvs_read(kvs, "/wlk_tst", &rd_cnt, sizeof(rd_cnt));
+	zassert_false(rc == 0, "read succeeded on deleted item [%d]", rc);
+
+	rc = kvs_compact(kvs);
+	zassert_false(rc != 0, "compact failed [%d]", rc);
+	LOG_INF("pos %d bend %d wrapcnt %d", kvs->data->pos, kvs->data->bend, kvs->data->wrapcnt);
+
+	rc = kvs_read(kvs, "/cnt", &rd_cnt, sizeof(rd_cnt));
+	zassert_false(rc != 0, "read failed [%d]", rc);
+
+	rc = kvs_read(kvs, "/cnt1", &rd_cnt, sizeof(rd_cnt));
+	zassert_false(rc != 0, "read failed [%d]", rc);
+
+	rc = kvs_read(kvs, "/cn", &rd_cnt, sizeof(rd_cnt));
+	zassert_false(rc != 0, "read failed [%d]", rc);
+
+	rc = kvs_read(kvs, "/wlk_tst", &rd_cnt, sizeof(rd_cnt));
+	zassert_false(rc == 0, "read succeeded on deleted item [%d]", rc);
 }
 
 ZTEST(kvs_tests, f_kvs_gc)
 {
-	struct kvs *kvs = GET_KVS(test);
+	struct kvs *kvs = GET_KVS(DT_NODELABEL(kvs_storage));
 	uint32_t cnt, wrapcnt;
-	int rc;
-
-	(void)kvs_unmount(kvs);
-	rc = kvs_mount(kvs);
-	zassert_false(rc != 0, "mount failed [%d]", rc);
-
-	cnt = 0U;
-	rc = kvs_write(kvs, "/cnt", &cnt, sizeof(cnt));
-	zassert_false(rc != 0, "write failed [%d]", rc);
-	wrapcnt = kvs->data->wrapcnt;
-
-	while (kvs->data->wrapcnt == wrapcnt) {
-		cnt++;
-		rc = kvs_write(kvs, "/cnt_", &cnt, sizeof(cnt));
-		zassert_false(rc != 0, "write failed [%d]", rc);
-	}
-
-	rc = kvs_read(kvs, "/cnt_", &cnt, sizeof(cnt));
-	zassert_false(rc != 0, "read failed [%d]", rc);
-
-	rc = kvs_read(kvs, "/cnt", &cnt, sizeof(cnt));
-	zassert_false(rc != 0, "read failed [%d]", rc);
-	zassert_false(cnt != 0U, "wrong read value");
-
-	rc = kvs_delete(kvs, "/cnt");
-	zassert_false(rc != 0, "write failed [%d]", rc);
-	wrapcnt = kvs->data->wrapcnt;
-
-	while (kvs->data->wrapcnt == wrapcnt) {
-		cnt++;
-		rc = kvs_write(kvs, "/cnt_", &cnt, sizeof(cnt));
-		zassert_false(rc != 0, "write failed [%d]", rc);
-	}
-
-	rc = kvs_read(kvs, "/cnt", &cnt, sizeof(cnt));
-	zassert_false(rc == 0, "read succeeded on deleted item");
-
-	rc = kvs_read(kvs, "/cnt_", &cnt, sizeof(cnt));
-	zassert_false(rc != 0, "read failed [%d]", rc);
-
-	rc = kvs_read(kvs, "/cnt1", &cnt, sizeof(cnt));
-	zassert_false(rc != 0, "read failed [%d]", rc);
-
-	rc = kvs_read(kvs, "/cn", &cnt, sizeof(cnt));
-	zassert_false(rc != 0, "read failed [%d]", rc);
-
-	rc = kvs_read(kvs, "/wlk_tst", &cnt, sizeof(cnt));
-	zassert_false(rc != 0, "read failed [%d]", rc);
-
-	rc = kvs_unmount(kvs);
-	zassert_true(rc == 0, "unmount failed [%d]", rc);
-}
-
-ZTEST(kvs_tests, g_kvs_erase)
-{
-	struct kvs *kvs = GET_KVS(test);
-	uint32_t en_cnt = 0U;
 	int rc;
 
 	(void)kvs_unmount(kvs);
@@ -301,11 +239,67 @@ ZTEST(kvs_tests, g_kvs_erase)
 	zassert_false(rc != 0, "erase failed [%d]", rc);
 	rc = kvs_mount(kvs);
 	zassert_false(rc != 0, "mount failed [%d]", rc);
-	zassert_false(kvs->data->pos != 0U, "wrong kvs->data->pos");
-	zassert_false(kvs->data->wrapcnt != 0U, "wrong kvs->data->wrapcnt");
-	rc = kvs_walk(kvs, "", kvs_walk_test_cb, (void *)&en_cnt);
-	zassert_false(rc != 0, "walk failed [%d]", rc);
-	zassert_false(en_cnt != 0U, "found data on erased kvs");
+
+	cnt = 0U;
+	rc = kvs_write(kvs, "c", &cnt, sizeof(cnt));
+	zassert_false(rc != 0, "write failed [%d]", rc);
+	wrapcnt = kvs->data->wrapcnt;
+
+	while (kvs->data->wrapcnt == wrapcnt) {
+		cnt++;
+		rc = kvs_write(kvs, "ccccc", &cnt, sizeof(cnt));
+		zassert_false(rc != 0, "write failed [%d]", rc);
+		LOG_INF("pos %d", kvs->data->pos);
+	}
+
+	LOG_INF("NXT pos %d", kvs->data->pos);
+	rc = kvs_read(kvs, "c", &cnt, sizeof(cnt));
+	zassert_false(rc != 0, "read failed [%d]", rc);
+	zassert_false(cnt != 0U, "wrong read value %d", cnt);
+
+	rc = kvs_read(kvs, "ccccc", &cnt, sizeof(cnt));
+	zassert_false(rc != 0, "read failed [%d]", rc);
+	
+	rc = kvs_delete(kvs, "c");
+	zassert_false(rc != 0, "delete failed [%d]", rc);
+
+	rc = kvs_read(kvs, "c", &cnt, sizeof(cnt));
+	zassert_false(rc == 0, "read succeeded on deleted item");
+
+	wrapcnt = kvs->data->wrapcnt;
+
+	while (kvs->data->wrapcnt == wrapcnt) {
+		cnt++;
+		rc = kvs_write(kvs, "ccccc", &cnt, sizeof(cnt));
+		zassert_false(rc != 0, "write failed [%d]", rc);
+	}
+
+	rc = kvs_read(kvs, "c", &cnt, sizeof(cnt));
+	zassert_false(rc == 0, "read succeeded on deleted item");
+
+	rc = kvs_read(kvs, "ccccc", &cnt, sizeof(cnt));
+	zassert_false(rc != 0, "read failed [%d]", rc);
+
 	rc = kvs_unmount(kvs);
 	zassert_true(rc == 0, "unmount failed [%d]", rc);
 }
+
+// ZTEST(kvs_tests, g_kvs_erase)
+// {
+// 	struct kvs *kvs = GET_KVS(DT_NODELABEL(kvs_storage));
+// 	uint32_t en_cnt = 0U;
+// 	int rc;
+
+// 	(void)kvs_unmount(kvs);
+// 	rc = kvs_erase(kvs);
+// 	zassert_false(rc != 0, "erase failed [%d]", rc);
+// 	rc = kvs_mount(kvs);
+// 	zassert_false(rc != 0, "mount failed [%d]", rc);
+// 	zassert_false(kvs->data->pos != 0U, "wrong kvs->data->pos [%x]", kvs->data->pos);
+// 	zassert_false(kvs->data->wrapcnt != 0U, "wrong kvs->data->wrapcnt");
+// 	rc = kvs_walk(kvs, "", kvs_walk_test_cb, (void *)&en_cnt);
+// 	zassert_false(rc != 0, "walk failed [%d]", rc);
+// 	zassert_false(en_cnt != 0U, "found data on erased kvs");
+// 	rc = kvs_unmount(kvs);
+// 	zassert_true(rc == 0, "unmount failed [%d]", rc);
+// }

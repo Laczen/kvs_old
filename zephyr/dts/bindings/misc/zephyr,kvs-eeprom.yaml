@@ -1,0 +1,41 @@
+# Copyright (c) 2023 Laczen
+# SPDX-License-Identifier: Apache-2.0
+
+description: Key Value Store on eeprom
+
+compatible: "zephyr,kvs-eeprom"
+
+include: base.yaml
+
+properties:
+  eeprom:
+    type: phandle
+    required: true
+    description: |
+      Backing storage eeprom.
+  
+  "#address-cells":
+    const: 1
+
+  "#size-cells":
+    const: 1
+
+  reg:
+    type: array
+    description: |
+      The reg property specifies the address range of the eeprom to use when
+      only a part of the eeprom is to be used for kvs storage.
+
+  sector-size:
+    type: int
+    required: true
+    description: |
+      The sector-size specifies how to divide the eeprom into sectors. The 
+      sector-size should be a power of 2.
+  
+  free-size:
+    type: int
+    description: |
+      To ensure no data is lost during garbage collection some area should 
+      always be free. This defaults to sector-size if omitted.
+
